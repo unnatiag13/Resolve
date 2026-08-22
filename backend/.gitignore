@@ -1,0 +1,11 @@
+node_modules/
+.env
+.DS_Store
+*.log
+
+# Debug & Temporary Scripts
+getIds.js
+getInlineDatabaseIds.js
+getNotionDatabases.js
+scan.js
+tools/debug-post.js

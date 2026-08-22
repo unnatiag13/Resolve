@@ -1,0 +1,13 @@
+node_modules/
+.env
+.DS_Store
+*.log
+
+# Backend specific ignored items
+backend/node_modules/
+backend/.env
+backend/getIds.js
+backend/getInlineDatabaseIds.js
+backend/getNotionDatabases.js
+backend/scan.js
+backend/tools/debug-post.js
