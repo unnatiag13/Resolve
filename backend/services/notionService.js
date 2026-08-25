@@ -97,6 +97,9 @@ function parseProperties(properties) {
       case 'checkbox':
         result[key] = value.checkbox;
         break;
+      case 'unique_id':
+        result[key] = value.unique_id ? (value.unique_id.prefix ? `${value.unique_id.prefix}-${value.unique_id.number}` : String(value.unique_id.number)) : null;
+        break;
       default:
         result[key] = null;
     }
