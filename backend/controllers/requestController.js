@@ -4,6 +4,7 @@ import { analyzeRequest } from '../services/requestAnalyzer.js';
 import { getRobustRequestAnalysis } from '../services/groqService.js';
 import { validateAndProcessTransition, logStatusTransition } from '../utils/statusWorkflow.js';
 import { processRequestIncidentLinking } from '../services/duplicateDetectionService.js';
+import { triggerNotification, EVENTS } from '../services/notificationService.js';
 
 /**
  * Helper to validate email format.
@@ -84,6 +85,12 @@ export async function createRequest(req, res, next) {
     });
 
     const finalIncidentId = linkingResult.linked ? linkingResult.incidentId : '';
+
+    // Trigger Request Created notification
+    await triggerNotification(EVENTS.REQUEST_CREATED, {
+      ...notionRequestData,
+      incidentId: finalIncidentId
+    });
 
     // 5. Create action log entries in Notion Action Logs DB only
     await notionService.createActionLog({
@@ -224,6 +231,19 @@ export async function updateRequest(req, res, next) {
     // Logging status change action
     if (verifiedUpdates.status !== undefined && verifiedUpdates.status !== (existing.Status || existing.status)) {
       await logStatusTransition(id, existing.Status || existing.status, verifiedUpdates.status, performer);
+      
+      const nextStatus = verifiedUpdates.status.toUpperCase();
+      if (nextStatus === 'RESOLVED') {
+        await triggerNotification(EVENTS.REQUEST_RESOLVED, updated);
+      } else if (nextStatus === 'VERIFIED') {
+        await triggerNotification(EVENTS.REQUEST_VERIFIED, updated);
+      } else if (nextStatus === 'CLOSED') {
+        await triggerNotification(EVENTS.REQUEST_CLOSED, updated);
+      }
+    }
+
+    if (verifiedUpdates.assignedTo !== undefined && verifiedUpdates.assignedTo !== (existing['Assigned To'] || existing.assignedTo)) {
+      await triggerNotification(EVENTS.REQUEST_ASSIGNED, updated);
     }
 
     if (department !== undefined && department !== existing.Department) {

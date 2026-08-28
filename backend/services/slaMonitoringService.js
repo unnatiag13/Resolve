@@ -1,5 +1,6 @@
 import { getRequests, updateRequest, createActionLog, getActionLogs } from './notionService.js';
 import { isSlaBreached } from '../utils/sla.js';
+import { triggerNotification, EVENTS } from './notificationService.js';
 
 // Unresolved statuses considered active under SLA monitoring
 const UNRESOLVED_STATUSES = ['NEW', 'TRIAGED', 'ASSIGNED', 'IN_PROGRESS'];
@@ -91,6 +92,9 @@ export async function processSlaBreaches() {
       // 1. Update status to SLA_BREACHED in Notion database
       await updateRequest(requestId, { status: 'SLA_BREACHED' });
 
+      // Trigger SLA Breach notification
+      await triggerNotification(EVENTS.SLA_BREACHED, req);
+
       // 2. Create status change Action Log
       await createActionLog({
         requestId,
@@ -151,6 +155,9 @@ export async function processSlaEscalations() {
       // 1. Mark as Escalated in Requests Notion database (updates Escalated At timestamp)
       await updateRequest(requestId, { escalatedAt: now.toISOString() });
 
+      // Trigger Escalation notification
+      await triggerNotification(EVENTS.ESCALATED, req);
+
       // 2. Create ESCALATED Action Log
       await createActionLog({
         requestId,
@@ -200,6 +207,9 @@ export async function processSlaReminders() {
       // Deduplicate: check if a reminder was already logged for this ticket
       if (!remindedRequestIds.has(requestId)) {
         console.log(`[SLA Monitor] SLA warning threshold reached for ${requestId}. Triggering pre-SLA reminder.`);
+
+        // Trigger Pre-SLA Reminder notification
+        await triggerNotification(EVENTS.REMINDER, req);
 
         // Create REMINDER_SENT Action Log in Notion
         await createActionLog({
