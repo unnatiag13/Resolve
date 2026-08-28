@@ -1,4 +1,4 @@
-import { getRequests, updateRequest, createActionLog } from './notionService.js';
+import { getRequests, updateRequest, createActionLog, getActionLogs } from './notionService.js';
 import { isSlaBreached } from '../utils/sla.js';
 
 // Unresolved statuses considered active under SLA monitoring
@@ -122,14 +122,69 @@ export async function processSlaBreaches() {
 }
 
 /**
+ * Scan unresolved warning requests, check if they already received a reminder,
+ * and trigger a new pre-SLA reminder Action Log if deduplicated.
+ *
+ * @returns {Promise<Array>} List of triggered reminder events in this run
+ */
+export async function processSlaReminders() {
+  const requests = await getRequests();
+  const allLogs = await getActionLogs();
+  const now = new Date();
+  const processedReminders = [];
+
+  // Create a fast lookup set of Request IDs that already have a REMINDER_SENT log
+  const remindedRequestIds = new Set(
+    allLogs
+      .filter(log => (log['Action'] || log.action) === 'REMINDER_SENT')
+      .map(log => log['Request ID'] || log.requestId || log.Name)
+  );
+
+  for (const req of requests) {
+    const requestId = req['Request ID'] || req['Name'] || req.id;
+    const slaState = calculateRequestSlaState(req, now);
+
+    // Only send reminders for unresolved requests in WARNING state
+    if (slaState.isUnresolved && slaState.state === 'WARNING') {
+      // Deduplicate: check if a reminder was already logged for this ticket
+      if (!remindedRequestIds.has(requestId)) {
+        console.log(`[SLA Monitor] SLA warning threshold reached for ${requestId}. Triggering pre-SLA reminder.`);
+
+        // Create REMINDER_SENT Action Log in Notion
+        await createActionLog({
+          requestId,
+          action: 'REMINDER_SENT',
+          reason: `Request is approaching its SLA deadline with ${slaState.remainingHours} hours remaining (Due At: ${slaState.dueAt}).`,
+          performedBy: 'SLA_MONITOR',
+          result: 'SUCCESS'
+        });
+
+        // Add to tracking set to prevent duplicate alerts in same run
+        remindedRequestIds.add(requestId);
+
+        processedReminders.push({
+          id: requestId,
+          description: req['Description'] || '',
+          dueAt: slaState.dueAt,
+          remainingHours: slaState.remainingHours
+        });
+      }
+    }
+  }
+
+  return processedReminders;
+}
+
+/**
  * Monitor all unresolved requests from Notion and group them by SLA state.
- * Triggers breach processing first to handle state transitions automatically.
+ * Triggers breach processing and reminder trigger cycles automatically.
  *
  * @returns {Promise<Object>} SLA summary report
  */
 export async function monitorSlaStates() {
-  // Automatically process breaches first to maintain data consistency
+  // 1. Process breaches and reminders first to ensure databases are updated
   const breachedThisCycle = await processSlaBreaches();
+  const remindedThisCycle = await processSlaReminders();
 
   const requests = await getRequests();
   const now = new Date();
@@ -138,6 +193,7 @@ export async function monitorSlaStates() {
     checkedAt: now.toISOString(),
     totalChecked: requests.length,
     processedBreachesThisCycle: breachedThisCycle.length,
+    triggeredRemindersThisCycle: remindedThisCycle.length,
     unresolvedCount: 0,
     normal: [],
     warning: [],
@@ -147,8 +203,7 @@ export async function monitorSlaStates() {
   for (const req of requests) {
     const slaState = calculateRequestSlaState(req, now);
 
-    // If it is unresolved, or if it is already breached (which is a state we want to report)
-    // Note: SLA_BREACHED status tickets will report as BREACHED state under active alerts
+    // Active tickets include unresolved status tickets and breached status tickets
     const isUnresolvedOrBreached = slaState.isUnresolved || req['Status'] === 'SLA_BREACHED' || req['status'] === 'SLA_BREACHED';
 
     if (isUnresolvedOrBreached) {
