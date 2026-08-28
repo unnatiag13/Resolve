@@ -10,7 +10,10 @@ export default function errorHandler(err, req, res, next) {
   let message = 'An unexpected error occurred. Please try again later.';
 
   // Handle known/custom error types or check error messages
-  if (err.message && err.message.includes('Missing Notion configuration variables')) {
+  if (err instanceof SyntaxError && err.status === 400 && 'body' in err) {
+    statusCode = 400;
+    message = `Bad Request: Invalid JSON payload. Details: ${err.message}`;
+  } else if (err.message && err.message.includes('Missing Notion configuration variables')) {
     statusCode = 500;
     message = 'Server configuration error: Notion database configuration is missing.';
   } else if (err.message && err.message.includes('Notion database operation failed')) {
@@ -22,10 +25,13 @@ export default function errorHandler(err, req, res, next) {
   } else if (err.message && err.message.includes('not found')) {
     statusCode = 404;
     message = err.message;
-  } else if (err.statusCode) {
-    // If Notion API client throws an error with statusCode
-    statusCode = err.statusCode;
+  } else if (err.name === 'APIResponseError' || err.name === 'APIRequestError' || (err.code && err.code.startsWith('notion_'))) {
+    // If Notion API client throws an error
+    statusCode = err.status || err.statusCode || 502;
     message = `Notion integration error: ${err.message}`;
+  } else if (err.statusCode) {
+    statusCode = err.statusCode;
+    message = err.message;
   } else if (err.status) {
     statusCode = err.status;
     message = err.message;
