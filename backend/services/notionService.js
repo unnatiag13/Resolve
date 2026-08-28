@@ -197,6 +197,36 @@ export async function getNextRequestId() {
   }
 }
 
+let requestsSchemaVerified = false;
+
+/**
+ * Ensure the Escalated At property exists in the Requests Notion Database schema.
+ */
+export async function ensureRequestsSchema() {
+  if (requestsSchemaVerified) return;
+  if (process.env.MOCK_NOTION === 'true') {
+    requestsSchemaVerified = true;
+    return;
+  }
+  try {
+    const db = await notion.databases.retrieve({ database_id: process.env.NOTION_REQUESTS_DATABASE_ID });
+    const schemaProps = db.properties || {};
+    
+    if (!schemaProps['Escalated At']) {
+      console.log('[Notion API] Adding Escalated At property to Requests database schema...');
+      await notion.databases.update({
+        database_id: process.env.NOTION_REQUESTS_DATABASE_ID,
+        properties: {
+          'Escalated At': { date: {} }
+        }
+      });
+    }
+    requestsSchemaVerified = true;
+  } catch (err) {
+    console.warn('Requests schema check warning (non-fatal):', err.message);
+  }
+}
+
 /**
  * Create a new Request in Notion.
  */
@@ -221,7 +251,8 @@ export async function createRequest(requestData) {
     dueAt,
     aiConfidence = 0,
     incidentId = '',
-    resolution = ''
+    resolution = '',
+    escalatedAt = null
   } = requestData;
 
   const nowIso = new Date().toISOString();
@@ -248,6 +279,7 @@ export async function createRequest(requestData) {
       'AI Confidence': Number(aiConfidence),
       'Incident ID': incidentId,
       'Resolution': resolution,
+      'Escalated At': escalatedAt ? new Date(escalatedAt).toISOString() : null,
       'Created At': nowIso,
       'Updated At': nowIso
     };
@@ -256,6 +288,7 @@ export async function createRequest(requestData) {
   }
 
   try {
+    await ensureRequestsSchema();
     // Dynamically retrieve database schema to map title and existing properties
     const dbSchema = await notion.databases.retrieve({ database_id: process.env.NOTION_REQUESTS_DATABASE_ID });
     const schemaProps = dbSchema.properties || {};
@@ -286,6 +319,7 @@ export async function createRequest(requestData) {
     if (schemaProps['AI Confidence']) properties['AI Confidence'] = { number: Number(aiConfidence) };
     if (schemaProps['Incident ID']) properties['Incident ID'] = { rich_text: richText(incidentId) };
     if (schemaProps['Resolution']) properties['Resolution'] = { rich_text: richText(resolution) };
+    if (schemaProps['Escalated At'] && escalatedAt) properties['Escalated At'] = { date: { start: new Date(escalatedAt).toISOString() } };
     if (schemaProps['Created At']) properties['Created At'] = { date: { start: nowIso } };
     if (schemaProps['Updated At']) properties['Updated At'] = { date: { start: nowIso } };
 
@@ -421,12 +455,14 @@ export async function updateRequest(requestId, updates) {
     if (updates.aiConfidence !== undefined) updatedRecord['AI Confidence'] = Number(updates.aiConfidence);
     if (updates.incidentId !== undefined) updatedRecord['Incident ID'] = updates.incidentId;
     if (updates.resolution !== undefined) updatedRecord['Resolution'] = updates.resolution;
+    if (updates.escalatedAt !== undefined) updatedRecord['Escalated At'] = updates.escalatedAt ? new Date(updates.escalatedAt).toISOString() : null;
 
     mockRequestsDb[index] = updatedRecord;
     return updatedRecord;
   }
 
   try {
+    await ensureRequestsSchema();
     // 1. Find the page ID of the request
     const existing = await getRequest(requestId);
     if (!existing) {
@@ -453,6 +489,9 @@ export async function updateRequest(requestId, updates) {
     if (updates.aiConfidence !== undefined) properties['AI Confidence'] = { number: Number(updates.aiConfidence) };
     if (updates.incidentId !== undefined) properties['Incident ID'] = { rich_text: richText(updates.incidentId) };
     if (updates.resolution !== undefined) properties['Resolution'] = { rich_text: richText(updates.resolution) };
+    if (updates.escalatedAt !== undefined) {
+      properties['Escalated At'] = updates.escalatedAt ? { date: { start: new Date(updates.escalatedAt).toISOString() } } : { date: null };
+    }
     
     // Always update the 'Updated At' timestamp
     properties['Updated At'] = { date: { start: new Date().toISOString() } };

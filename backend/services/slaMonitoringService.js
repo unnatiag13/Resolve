@@ -122,6 +122,57 @@ export async function processSlaBreaches() {
 }
 
 /**
+ * Automatically handle escalations for breached requests.
+ * Detects unresolved requests that have breached their SLA, checks if they are already escalated,
+ * marks them as escalated (populating Escalated At in Notion), and logs the event.
+ *
+ * @returns {Promise<Array>} List of requests escalated during this run
+ */
+export async function processSlaEscalations() {
+  const requests = await getRequests();
+  const now = new Date();
+  const processed = [];
+
+  for (const req of requests) {
+    const statusStr = (req['Status'] || req['status'] || '').toUpperCase();
+    const dueAtStr = req['Due At'] || req['dueAt'];
+    const escalatedAt = req['Escalated At'] || req['escalatedAt'];
+
+    // Skip resolved, verified, or closed requests
+    const isTerminal = ['RESOLVED', 'VERIFIED', 'CLOSED'].includes(statusStr);
+    if (isTerminal || !dueAtStr) continue;
+
+    // Check if deadline is passed and not already escalated
+    const dueAtDate = new Date(dueAtStr);
+    if (now > dueAtDate && !escalatedAt) {
+      const requestId = req['Request ID'] || req['Name'] || req.id;
+      console.log(`[SLA Monitor] Escalating request ${requestId} (deadline passed: ${dueAtStr}).`);
+
+      // 1. Mark as Escalated in Requests Notion database (updates Escalated At timestamp)
+      await updateRequest(requestId, { escalatedAt: now.toISOString() });
+
+      // 2. Create ESCALATED Action Log
+      await createActionLog({
+        requestId,
+        action: 'ESCALATED',
+        reason: `Request breached its SLA and was automatically escalated for higher-level attention. Original status: ${statusStr}.`,
+        performedBy: 'SLA_MONITOR',
+        result: 'SUCCESS'
+      });
+
+      processed.push({
+        id: requestId,
+        originalStatus: statusStr,
+        dueAt: dueAtStr,
+        escalatedAt: now.toISOString()
+      });
+    }
+  }
+
+  return processed;
+}
+
+/**
  * Scan unresolved warning requests, check if they already received a reminder,
  * and trigger a new pre-SLA reminder Action Log if deduplicated.
  *
@@ -177,13 +228,14 @@ export async function processSlaReminders() {
 
 /**
  * Monitor all unresolved requests from Notion and group them by SLA state.
- * Triggers breach processing and reminder trigger cycles automatically.
+ * Triggers breach processing, escalation check, and reminder trigger cycles automatically.
  *
  * @returns {Promise<Object>} SLA summary report
  */
 export async function monitorSlaStates() {
-  // 1. Process breaches and reminders first to ensure databases are updated
+  // 1. Process breaches, escalations, and reminders first to ensure databases are updated
   const breachedThisCycle = await processSlaBreaches();
+  const escalatedThisCycle = await processSlaEscalations();
   const remindedThisCycle = await processSlaReminders();
 
   const requests = await getRequests();
@@ -193,6 +245,7 @@ export async function monitorSlaStates() {
     checkedAt: now.toISOString(),
     totalChecked: requests.length,
     processedBreachesThisCycle: breachedThisCycle.length,
+    processedEscalationsThisCycle: escalatedThisCycle.length,
     triggeredRemindersThisCycle: remindedThisCycle.length,
     unresolvedCount: 0,
     normal: [],
@@ -215,7 +268,8 @@ export async function monitorSlaStates() {
         priority: req['Priority'] || 'MEDIUM',
         slaHours: Number(req['SLA Hours'] || 24),
         dueAt: slaState.dueAt,
-        remainingHours: slaState.remainingHours
+        remainingHours: slaState.remainingHours,
+        escalatedAt: req['Escalated At'] || req['escalatedAt'] || null
       };
 
       if (slaState.state === 'BREACHED') {
