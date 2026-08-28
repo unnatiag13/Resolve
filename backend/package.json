@@ -9,6 +9,7 @@
     "dev": "nodemon -e js,json,env server.js"
   },
   "dependencies": {
+    "@google/genai": "^2.19.0",
     "@notionhq/client": "^2.2.15",
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",

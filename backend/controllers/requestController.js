@@ -1,6 +1,7 @@
 import * as notionService from '../services/notionService.js';
 import * as slaUtil from '../utils/sla.js';
 import { analyzeRequest } from '../services/requestAnalyzer.js';
+import { getRobustRequestAnalysis } from '../services/geminiService.js';
 
 /**
  * Helper to validate email format.
@@ -12,11 +13,11 @@ function isValidEmail(email) {
 
 /**
  * POST /api/requests
- * Creates a new request with dynamic rule-based AI request analysis.
+ * Creates a new request with dynamic Gemini AI request analysis, safety override, department mapping, and fallback.
  */
 export async function createRequest(req, res, next) {
   try {
-    const { requesterName, requesterEmail, location, description } = req.body;
+    const { requesterName, requesterEmail, location, description, forceFallback } = req.body;
 
     // 1. Validate the request body
     if (!requesterName || !requesterName.trim()) {
@@ -25,7 +26,7 @@ export async function createRequest(req, res, next) {
       throw err;
     }
     if (!requesterEmail || !requesterEmail.trim() || !isValidEmail(requesterEmail)) {
-      const err = new Error('A valid requester email is required.');
+      const err = new Error('A valid requester email address is required.');
       err.isValidationError = true;
       throw err;
     }
@@ -43,11 +44,8 @@ export async function createRequest(req, res, next) {
     // 2. Generate a Request ID (e.g. REQ-0001)
     const requestId = await notionService.getNextRequestId();
 
-    // 3. Dynamic Rule-based Request Analysis
-    const analysis = analyzeRequest(description);
-
-    const createdAt = new Date();
-    const dueAt = slaUtil.calculateDueAt(createdAt, analysis.slaHours);
+    // 3. Robust Request Analysis (Gemini AI -> Safety Override -> Department Mapping -> SLA -> Rule-based Fallback)
+    const analysis = await getRobustRequestAnalysis({ description, location, requesterName }, Boolean(forceFallback));
 
     // 4. Create request in Notion
     const notionRequestData = {
@@ -56,16 +54,16 @@ export async function createRequest(req, res, next) {
       requesterName,
       requesterEmail,
       location,
-      source: 'Web', // Default for web API
+      source: 'Web',
       intent: analysis.intent,
       category: analysis.category,
       subcategory: analysis.subcategory,
       priority: analysis.priority,
       priorityReason: analysis.priorityReason,
       department: analysis.department,
-      status: analysis.status,
+      status: 'TRIAGED',
       slaHours: analysis.slaHours,
-      dueAt,
+      dueAt: analysis.dueAt,
       aiConfidence: analysis.aiConfidence,
       assignedTo: '',
       incidentId: '',
@@ -74,11 +72,11 @@ export async function createRequest(req, res, next) {
 
     const newRequest = await notionService.createRequest(notionRequestData);
 
-    // 5. Create action log entries
+    // 5. Create action log entries in Notion Action Logs DB only
     await notionService.createActionLog({
       requestId,
       action: 'REQUEST_CREATED',
-      reason: 'Request submitted successfully through the web channel.',
+      reason: 'New request received and created successfully',
       performedBy: 'SYSTEM',
       result: 'SUCCESS'
     });
@@ -86,7 +84,7 @@ export async function createRequest(req, res, next) {
     await notionService.createActionLog({
       requestId,
       action: 'AI_ANALYZED',
-      reason: `Rule-based AI analyzed intent as '${analysis.intent}', category as '${analysis.category}' and subcategory as '${analysis.subcategory}' (Confidence: ${analysis.aiConfidence}).`,
+      reason: `Request analyzed via ${analysis.analysisSource} and classified as ${analysis.category} / ${analysis.subcategory} successfully`,
       performedBy: 'SYSTEM',
       result: 'SUCCESS'
     });
@@ -94,7 +92,7 @@ export async function createRequest(req, res, next) {
     await notionService.createActionLog({
       requestId,
       action: 'PRIORITY_ASSIGNED',
-      reason: `Priority set to '${analysis.priority}' with SLA threshold of ${analysis.slaHours} hours. Reason: ${analysis.priorityReason}`,
+      reason: `${analysis.priority} priority assigned (${analysis.slaHours}h SLA). Reason: ${analysis.priorityReason}`,
       performedBy: 'SYSTEM',
       result: 'SUCCESS'
     });
@@ -102,7 +100,7 @@ export async function createRequest(req, res, next) {
     await notionService.createActionLog({
       requestId,
       action: 'DEPARTMENT_ASSIGNED',
-      reason: `Automatically routed and assigned to department '${analysis.department}'.`,
+      reason: `Request assigned to ${analysis.department} department`,
       performedBy: 'SYSTEM',
       result: 'SUCCESS'
     });
@@ -122,12 +120,13 @@ export async function createRequest(req, res, next) {
         priority: newRequest.Priority || analysis.priority,
         priorityReason: newRequest['Priority Reason'] || analysis.priorityReason,
         department: newRequest.Department || analysis.department,
-        status: newRequest.Status || analysis.status,
+        status: newRequest.Status || 'TRIAGED',
         slaHours: newRequest['SLA Hours'] || analysis.slaHours,
-        dueAt: newRequest['Due At'] || dueAt,
+        dueAt: newRequest['Due At'] || analysis.dueAt,
         aiConfidence: newRequest['AI Confidence'] !== undefined && newRequest['AI Confidence'] !== null ? newRequest['AI Confidence'] : analysis.aiConfidence,
-        createdAt: newRequest['Created At'] || createdAt,
-        updatedAt: newRequest['Updated At'] || createdAt,
+        analysisSource: analysis.analysisSource,
+        createdAt: newRequest['Created At'] || new Date().toISOString(),
+        updatedAt: newRequest['Updated At'] || new Date().toISOString(),
         notionPageId: newRequest.notionPageId
       }
     });

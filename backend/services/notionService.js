@@ -522,6 +522,44 @@ export async function getNextLogId() {
 /**
  * Create an action log entry.
  */
+let actionLogsSchemaVerified = false;
+
+/**
+ * Ensure all 7 required properties exist in the Action Logs Notion Database schema.
+ */
+async function ensureActionLogsSchema() {
+  if (actionLogsSchemaVerified) return;
+  try {
+    const db = await notion.databases.retrieve({ database_id: process.env.NOTION_ACTION_LOGS_DATABASE_ID });
+    const schemaProps = db.properties || {};
+    const missingProps = {};
+
+    const titlePropName = Object.keys(schemaProps).find(k => schemaProps[k].type === 'title') || 'Log ID';
+    if (titlePropName !== 'Log ID') {
+      missingProps[titlePropName] = { name: 'Log ID' };
+    }
+    if (!schemaProps['Request ID']) missingProps['Request ID'] = { rich_text: {} };
+    if (!schemaProps['Action']) missingProps['Action'] = { select: {} };
+    if (!schemaProps['Reason']) missingProps['Reason'] = { rich_text: {} };
+    if (!schemaProps['Performed By']) missingProps['Performed By'] = { rich_text: {} };
+    if (!schemaProps['Timestamp']) missingProps['Timestamp'] = { date: {} };
+    if (!schemaProps['Result']) missingProps['Result'] = { select: {} };
+
+    if (Object.keys(missingProps).length > 0) {
+      await notion.databases.update({
+        database_id: process.env.NOTION_ACTION_LOGS_DATABASE_ID,
+        properties: missingProps
+      });
+    }
+    actionLogsSchemaVerified = true;
+  } catch (err) {
+    console.warn('Action Logs schema check warning (non-fatal):', err.message);
+  }
+}
+
+/**
+ * Create an action log entry.
+ */
 export async function createActionLog(logData) {
   validateConfig();
   const {
@@ -551,6 +589,8 @@ export async function createActionLog(logData) {
   }
 
   try {
+    await ensureActionLogsSchema();
+
     // Dynamically retrieve Action Logs database schema to adapt to existing columns
     const dbSchema = await notion.databases.retrieve({ database_id: process.env.NOTION_ACTION_LOGS_DATABASE_ID });
     const schemaProps = dbSchema.properties || {};
@@ -656,4 +696,104 @@ export async function getDepartments() {
     console.error('Error fetching departments from Notion:', error.message);
     throw new Error('Notion database query failed: ' + error.message);
   }
+}
+
+/**
+ * Create a new department record in Notion Departments database with duplicate prevention.
+ */
+export async function createDepartment(deptData) {
+  validateConfig();
+  const {
+    id,
+    name,
+    responsiblePerson = 'Not Assigned',
+    email = '',
+    defaultSla = 24,
+    escalationContact = 'Not Assigned',
+    active = true
+  } = deptData;
+
+  if (process.env.MOCK_NOTION === 'true') {
+    const existing = mockDepartmentsDb.find(d => (d['Department ID'] && d['Department ID'].toLowerCase() === id.toLowerCase()) || (d['Name'] && d['Name'].toLowerCase() === id.toLowerCase()));
+    if (existing) {
+      return { added: false, departmentId: id, name, reason: 'Duplicate found in mock database' };
+    }
+    const mockDept = {
+      notionPageId: `mock-dept-${Date.now()}`,
+      'Name': id,
+      'Department ID': id,
+      'Department Name': name,
+      'Responsible Person': responsiblePerson,
+      'Email': email,
+      'Default SLA': Number(defaultSla),
+      'Escalation Contact': escalationContact,
+      'Active': active
+    };
+    mockDepartmentsDb.push(mockDept);
+    return { added: true, departmentId: id, name, department: mockDept };
+  }
+
+  try {
+    // 1. Fetch existing departments to check for duplicates
+    const response = await notion.databases.query({
+      database_id: process.env.NOTION_DEPARTMENTS_DATABASE_ID
+    });
+
+    const existingPages = response.results.map(page => {
+      const parsed = parseProperties(page.properties);
+      return {
+        notionPageId: page.id,
+        id: parsed.Name || parsed['Department ID'] || '',
+        name: parsed['Department Name'] || ''
+      };
+    });
+
+    const duplicate = existingPages.find(d => 
+      (d.id && d.id.toLowerCase() === id.toLowerCase()) || 
+      (d.name && d.name.toLowerCase() === name.toLowerCase())
+    );
+
+    if (duplicate) {
+      return { added: false, departmentId: id, name, reason: 'Duplicate found in Notion database' };
+    }
+
+    // 2. Map properties matching Notion schema
+    const properties = {
+      'Name': { title: richText(id) },
+      'Department Name': { rich_text: richText(name) },
+      'Responsible Person': { rich_text: richText(responsiblePerson) },
+      'Email': { email: email || null },
+      'Default SLA': { number: Number(defaultSla) },
+      'Escalation Contact': { rich_text: richText(escalationContact) },
+      'Active': { checkbox: Boolean(active) }
+    };
+
+    const newPage = await notion.pages.create({
+      parent: { database_id: process.env.NOTION_DEPARTMENTS_DATABASE_ID },
+      properties
+    });
+
+    return {
+      added: true,
+      departmentId: id,
+      name,
+      notionPageId: newPage.id,
+      ...parseProperties(newPage.properties)
+    };
+  } catch (error) {
+    console.error(`Error creating department ${id} in Notion:`, error.message);
+    throw new Error(`Failed to create department ${id}: ` + error.message);
+  }
+}
+
+/**
+ * Seed missing departments into Notion Departments database.
+ */
+export async function seedDepartments(departmentsList) {
+  const results = [];
+  for (const dept of departmentsList) {
+    const res = await createDepartment(dept);
+    results.push(res);
+  }
+  return results;
 }
