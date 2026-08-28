@@ -52,7 +52,16 @@ export async function createRequest(req, res, next) {
     // 3. Robust Request Analysis (Gemini AI -> Safety Override -> Department Mapping -> SLA -> Rule-based Fallback)
     const analysis = await getRobustRequestAnalysis({ description, location, requesterName }, Boolean(forceFallback));
 
-    // 4. Create request in Notion
+    // 4. Run duplicate request detection & incident linking BEFORE storing in Notion
+    const linkingResult = await processRequestIncidentLinking({
+      category: analysis.category,
+      location,
+      description
+    }, null);
+
+    const finalIncidentId = linkingResult.linked ? linkingResult.incidentId : '';
+
+    // 5. Create request in Notion (single write with incidentId already populated)
     const notionRequestData = {
       requestId,
       description,
@@ -71,59 +80,63 @@ export async function createRequest(req, res, next) {
       dueAt: analysis.dueAt,
       aiConfidence: analysis.aiConfidence,
       assignedTo: '',
-      incidentId: '',
+      incidentId: finalIncidentId,
       resolution: ''
     };
 
     const newRequest = await notionService.createRequest(notionRequestData);
 
-    // Run duplicate request detection & incident linking
-    const linkingResult = await processRequestIncidentLinking(requestId, {
-      category: analysis.category,
-      location,
-      description
-    });
-
-    const finalIncidentId = linkingResult.linked ? linkingResult.incidentId : '';
-
-    // Trigger Request Created notification
-    await triggerNotification(EVENTS.REQUEST_CREATED, {
+    // Trigger Request Created notification concurrently
+    triggerNotification(EVENTS.REQUEST_CREATED, {
       ...notionRequestData,
       incidentId: finalIncidentId
-    });
+    }).catch(err => console.warn('[Notification Error]', err.message));
 
-    // 5. Create action log entries in Notion Action Logs DB only
-    await notionService.createActionLog({
-      requestId,
-      action: 'REQUEST_CREATED',
-      reason: 'New request received and created successfully',
-      performedBy: 'SYSTEM',
-      result: 'SUCCESS'
-    });
+    // 6. Create Action Logs in parallel (non-blocking for fast response)
+    const actionLogs = [
+      {
+        requestId,
+        action: 'REQUEST_CREATED',
+        reason: 'New request received and created successfully',
+        performedBy: 'SYSTEM',
+        result: 'SUCCESS'
+      },
+      {
+        requestId,
+        action: 'AI_ANALYZED',
+        reason: `Request analyzed via ${analysis.analysisSource} and classified as ${analysis.category} / ${analysis.subcategory} successfully`,
+        performedBy: 'SYSTEM',
+        result: 'SUCCESS'
+      },
+      {
+        requestId,
+        action: 'PRIORITY_ASSIGNED',
+        reason: `${analysis.priority} priority assigned (${analysis.slaHours}h SLA). Reason: ${analysis.priorityReason}`,
+        performedBy: 'SYSTEM',
+        result: 'SUCCESS'
+      },
+      {
+        requestId,
+        action: 'DEPARTMENT_ASSIGNED',
+        reason: `Request assigned to ${analysis.department} department`,
+        performedBy: 'SYSTEM',
+        result: 'SUCCESS'
+      }
+    ];
 
-    await notionService.createActionLog({
-      requestId,
-      action: 'AI_ANALYZED',
-      reason: `Request analyzed via ${analysis.analysisSource} and classified as ${analysis.category} / ${analysis.subcategory} successfully`,
-      performedBy: 'SYSTEM',
-      result: 'SUCCESS'
-    });
+    if (linkingResult.linked) {
+      actionLogs.push({
+        requestId,
+        action: 'AI_ANALYZED',
+        reason: `Request identified as a duplicate of ${linkingResult.parentId}. Linked to Incident ID: ${finalIncidentId}.`,
+        performedBy: 'SYSTEM',
+        result: 'SUCCESS'
+      });
+    }
 
-    await notionService.createActionLog({
-      requestId,
-      action: 'PRIORITY_ASSIGNED',
-      reason: `${analysis.priority} priority assigned (${analysis.slaHours}h SLA). Reason: ${analysis.priorityReason}`,
-      performedBy: 'SYSTEM',
-      result: 'SUCCESS'
-    });
-
-    await notionService.createActionLog({
-      requestId,
-      action: 'DEPARTMENT_ASSIGNED',
-      reason: `Request assigned to ${analysis.department} department`,
-      performedBy: 'SYSTEM',
-      result: 'SUCCESS'
-    });
+    // Dispatch action logs concurrently in a single batch
+    await Promise.allSettled(actionLogs.map(log => notionService.createActionLog(log)))
+      .catch(err => console.warn('[Action Logs Error]', err.message));
 
     res.status(201).json({
       success: true,
@@ -162,14 +175,55 @@ export async function createRequest(req, res, next) {
  */
 export async function getRequests(req, res, next) {
   try {
-    const requests = await notionService.getRequests();
+    const allRequests = await notionService.getRequests();
+    // Apply optional filters
+    const { status, priority, incidentId, assignedTo } = req.query;
+    let filtered = allRequests;
+    if (status) {
+      const allowed = ['NEW','TRIAGED','ASSIGNED','IN_PROGRESS','WAITING','SLA_BREACHED','ESCALATED','RESOLVED','VERIFIED','CLOSED'];
+      if (!allowed.includes(status.toUpperCase())) {
+        return res.status(400).json({ success: false, message: `Invalid status filter. Allowed: ${allowed.join(', ')}` });
+      }
+      filtered = filtered.filter(r => (r.Status || r.status || '').toUpperCase() === status.toUpperCase());
+    }
+    if (priority) {
+      const allowedPri = ['LOW','MEDIUM','HIGH','URGENT'];
+      if (!allowedPri.includes(priority.toUpperCase())) {
+        return res.status(400).json({ success: false, message: `Invalid priority filter. Allowed: ${allowedPri.join(', ')}` });
+      }
+      filtered = filtered.filter(r => (r.Priority || r.priority || '').toUpperCase() === priority.toUpperCase());
+    }
+    if (incidentId) {
+      filtered = filtered.filter(r => (r['Incident ID'] || r.incidentId || '').toString() === incidentId);
+    }
+    if (assignedTo) {
+      filtered = filtered.filter(r => {
+        const assignee = r['Assigned To'] || r.assignedTo || '';
+        return assignee.toString().toLowerCase() === assignedTo.toLowerCase();
+      });
+    }
     res.status(200).json({
       success: true,
-      count: requests.length,
-      data: requests
+      count: filtered.length,
+      data: filtered
     });
   } catch (error) {
     next(error);
+  }
+}
+
+export async function getRequestLogs(req, res, next) {
+  try {
+    const { id } = req.params;
+    const logs = await notionService.getActionLogs(id);
+    res.status(200).json({
+      success: true,
+      count: logs.length,
+      data: logs
+    });
+  } catch (error) {
+    console.error('[getRequestLogs Error]:', error);
+    res.status(500).json({ success: false, error: error.message, stack: error.stack });
   }
 }
 
