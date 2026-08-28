@@ -236,7 +236,7 @@ Do not output markdown code wrapper. Output JSON only.`;
  * @param {string} newRequestId - ID of the newly created request (e.g. REQ-0044)
  * @param {Object} newRequestData - Payload containing category, location, description
  */
-export async function processRequestIncidentLinking(newRequestId, newRequestData) {
+export async function processRequestIncidentLinking(newRequestData, newRequestId = null) {
   const check = await detectDuplicateRequest({
     category: newRequestData.category,
     location: newRequestData.location,
@@ -264,18 +264,20 @@ export async function processRequestIncidentLinking(newRequestId, newRequestData
       });
     }
 
-    // Link new request to the Incident ID
-    console.log(`[Incident Linker] Linking duplicate ticket ${newRequestId} to Incident ID ${incidentId}`);
-    await updateRequest(newRequestId, { incidentId });
+    // If newRequestId was provided (post-creation), update the new request in Notion as well
+    if (newRequestId) {
+      console.log(`[Incident Linker] Linking duplicate ticket ${newRequestId} to Incident ID ${incidentId}`);
+      await updateRequest(newRequestId, { incidentId });
 
-    // Create duplicate Action Log
-    await createActionLog({
-      requestId: newRequestId,
-      action: 'AI_ANALYZED',
-      reason: `Request identified as a duplicate of ${parentId}. Linked to Incident ID: ${incidentId}.`,
-      performedBy: 'SYSTEM',
-      result: 'SUCCESS'
-    });
+      // Create duplicate Action Log
+      await createActionLog({
+        requestId: newRequestId,
+        action: 'AI_ANALYZED',
+        reason: `Request identified as a duplicate of ${parentId}. Linked to Incident ID: ${incidentId}.`,
+        performedBy: 'SYSTEM',
+        result: 'SUCCESS'
+      });
+    }
 
     return { linked: true, incidentId, parentId, matchType: check.matchType };
   }
