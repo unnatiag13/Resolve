@@ -3,6 +3,7 @@ import * as slaUtil from '../utils/sla.js';
 import { analyzeRequest } from '../services/requestAnalyzer.js';
 import { getRobustRequestAnalysis } from '../services/groqService.js';
 import { validateAndProcessTransition, logStatusTransition } from '../utils/statusWorkflow.js';
+import { processRequestIncidentLinking } from '../services/duplicateDetectionService.js';
 
 /**
  * Helper to validate email format.
@@ -75,6 +76,15 @@ export async function createRequest(req, res, next) {
 
     const newRequest = await notionService.createRequest(notionRequestData);
 
+    // Run duplicate request detection & incident linking
+    const linkingResult = await processRequestIncidentLinking(requestId, {
+      category: analysis.category,
+      location,
+      description
+    });
+
+    const finalIncidentId = linkingResult.linked ? linkingResult.incidentId : '';
+
     // 5. Create action log entries in Notion Action Logs DB only
     await notionService.createActionLog({
       requestId,
@@ -127,6 +137,7 @@ export async function createRequest(req, res, next) {
         slaHours: newRequest['SLA Hours'] || analysis.slaHours,
         dueAt: newRequest['Due At'] || analysis.dueAt,
         aiConfidence: newRequest['AI Confidence'] !== undefined && newRequest['AI Confidence'] !== null ? newRequest['AI Confidence'] : analysis.aiConfidence,
+        incidentId: finalIncidentId || newRequest['Incident ID'] || '',
         analysisSource: analysis.analysisSource,
         createdAt: newRequest['Created At'] || new Date().toISOString(),
         updatedAt: newRequest['Updated At'] || new Date().toISOString(),
