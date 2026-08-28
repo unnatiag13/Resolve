@@ -1,5 +1,6 @@
 import * as notionService from '../services/notionService.js';
 import * as slaUtil from '../utils/sla.js';
+import { analyzeRequest } from '../services/requestAnalyzer.js';
 
 /**
  * Helper to validate email format.
@@ -11,7 +12,7 @@ function isValidEmail(email) {
 
 /**
  * POST /api/requests
- * Creates a new request with mock AI classification.
+ * Creates a new request with dynamic rule-based AI request analysis.
  */
 export async function createRequest(req, res, next) {
   try {
@@ -42,21 +43,11 @@ export async function createRequest(req, res, next) {
     // 2. Generate a Request ID (e.g. REQ-0001)
     const requestId = await notionService.getNextRequestId();
 
-    // 3. Mock AI Analysis (as requested for Phase 1)
-    const mockAnalysis = {
-      category: 'PLUMBING',
-      priority: 'HIGH',
-      department: 'Maintenance',
-      status: 'TRIAGED',
-      slaHours: slaUtil.getSlaHours('HIGH'), // 12 hours
-      priorityReason: 'Water outages in hostels are treated as high priority due to immediate sanitation needs.',
-      aiConfidence: 0.95,
-      intent: 'COMPLAINT',
-      subcategory: 'Water Supply'
-    };
+    // 3. Dynamic Rule-based Request Analysis
+    const analysis = analyzeRequest(description);
 
     const createdAt = new Date();
-    const dueAt = slaUtil.calculateDueAt(createdAt, mockAnalysis.slaHours);
+    const dueAt = slaUtil.calculateDueAt(createdAt, analysis.slaHours);
 
     // 4. Create request in Notion
     const notionRequestData = {
@@ -66,16 +57,16 @@ export async function createRequest(req, res, next) {
       requesterEmail,
       location,
       source: 'Web', // Default for web API
-      intent: mockAnalysis.intent,
-      category: mockAnalysis.category,
-      subcategory: mockAnalysis.subcategory,
-      priority: mockAnalysis.priority,
-      priorityReason: mockAnalysis.priorityReason,
-      department: mockAnalysis.department,
-      status: mockAnalysis.status,
-      slaHours: mockAnalysis.slaHours,
+      intent: analysis.intent,
+      category: analysis.category,
+      subcategory: analysis.subcategory,
+      priority: analysis.priority,
+      priorityReason: analysis.priorityReason,
+      department: analysis.department,
+      status: analysis.status,
+      slaHours: analysis.slaHours,
       dueAt,
-      aiConfidence: mockAnalysis.aiConfidence,
+      aiConfidence: analysis.aiConfidence,
       assignedTo: '',
       incidentId: '',
       resolution: ''
@@ -95,7 +86,7 @@ export async function createRequest(req, res, next) {
     await notionService.createActionLog({
       requestId,
       action: 'AI_ANALYZED',
-      reason: `Mock AI categorized as ${mockAnalysis.category} with ${mockAnalysis.priority} priority. SLA set to ${mockAnalysis.slaHours} hours.`,
+      reason: `Rule-based AI analyzed request as ${analysis.category} / ${analysis.subcategory} (${analysis.priority} priority). SLA set to ${analysis.slaHours} hours.`,
       performedBy: 'AI_Agent',
       result: 'SUCCESS'
     });
