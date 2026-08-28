@@ -6,6 +6,7 @@ const router = express.Router();
 // Request Routing
 router.post('/', requestController.createRequest);
 router.get('/', requestController.getRequests);
+router.get('/:id/logs', requestController.getRequestLogs);
 router.get('/:id', requestController.getRequestById);
 router.patch('/:id', requestController.updateRequest);
 
