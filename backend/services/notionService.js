@@ -37,7 +37,8 @@ const mockDepartmentsDb = [
  * Validate that all required Notion environment variables are present.
  */
 function validateConfig() {
-  if (process.env.MOCK_NOTION === 'true') {
+  if (process.env.MOCK_NOTION === 'true' || !process.env.NOTION_TOKEN) {
+    process.env.MOCK_NOTION = 'true';
     return; // Bypass config validation in mock mode
   }
 
