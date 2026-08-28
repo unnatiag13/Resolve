@@ -188,7 +188,90 @@ Requester Name: "${requesterName ? requesterName.trim() : 'Student/Staff'}"`;
 }
 
 /**
- * Executes robust request analysis using Gemini AI with strict validation, safety override, department mapping, and SLA logic.
+ * Analyzes request details using Groq API (Llama 3.3 model) and returns structured JSON classification.
+ */
+export async function analyzeRequestWithGroq(requestData = {}) {
+  const apiKey = process.env.GROQ_API_KEY;
+  if (!apiKey || !apiKey.trim()) {
+    throw new Error('GROQ_API_KEY is missing or empty.');
+  }
+
+  const payload = typeof requestData === 'string' ? { description: requestData } : requestData;
+  const { description = '', location = '', requesterName = '' } = payload;
+
+  if (!description || !description.trim()) {
+    throw new Error('Description is required for Groq request analysis.');
+  }
+
+  const systemInstruction = `You are an expert AI Request Classifier for ResolveAI, a campus autonomous ticketing and resolution platform.
+Your task is to analyze incoming campus support requests and classify them into structured JSON.
+
+CLASSIFICATION RULES:
+1. INTENT must be one of: COMPLAINT, REQUEST, QUERY, EMERGENCY
+2. CATEGORY must be one of: MAINTENANCE, ELECTRICAL, PLUMBING, IT, HOSTEL, ACADEMIC, ADMINISTRATION, ACCOUNTS, DOCUMENT, SECURITY, OTHER
+3. PRIORITY must be one of: LOW, MEDIUM, HIGH, CRITICAL
+
+IMPORTANT CONSTRAINTS:
+- Do NOT generate or include any "department" field.
+- Return ONLY a valid, parseable JSON object matching the requested fields.
+
+JSON Output Schema:
+{
+  "intent": "INTENT_ENUM",
+  "category": "CATEGORY_ENUM",
+  "subcategory": "string describing subcategory",
+  "priority": "PRIORITY_ENUM",
+  "priorityReason": "short explanation for assigned priority",
+  "aiConfidence": number_between_0_and_1
+}`;
+
+  const promptText = `Analyze the following campus request:
+Request Description: "${description.trim()}"
+Location: "${location ? location.trim() : 'Unspecified'}"
+Requester Name: "${requesterName ? requesterName.trim() : 'Student/Staff'}"`;
+
+  try {
+    const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${apiKey.trim()}`
+      },
+      body: JSON.stringify({
+        model: 'llama-3.3-70b-specdec',
+        response_format: { type: 'json_object' },
+        messages: [
+          { role: 'system', content: systemInstruction },
+          { role: 'user', content: promptText }
+        ],
+        temperature: 0.1
+      })
+    });
+
+    if (!res.ok) {
+      const errText = await res.text();
+      throw new Error(`Groq API returned status ${res.status}: ${errText}`);
+    }
+
+    const data = await res.json();
+    const replyText = data.choices?.[0]?.message?.content?.trim() || '{}';
+    const parsed = JSON.parse(replyText);
+
+    return {
+      intent: ALLOWED_INTENTS.includes(parsed.intent) ? parsed.intent : 'COMPLAINT',
+      category: ALLOWED_CATEGORIES.includes(parsed.category) ? parsed.category : 'OTHER',
+      subcategory: parsed.subcategory || 'General',
+      priority: ALLOWED_PRIORITIES.includes(parsed.priority) ? parsed.priority : 'MEDIUM',
+      priorityReason: parsed.priorityReason || 'Analyzed by Groq AI based on context and urgency.',
+      aiConfidence: typeof parsed.aiConfidence === 'number' ? parsed.aiConfidence : 0.95
+    };
+  } catch (error) {
+    throw new Error(`Groq API analysis failed: ${error.message}`);
+  }
+}
+
+/**
+ * Executes robust request analysis using Groq, Gemini, or Rule-Based Fallback depending on key availability and quotas.
  *
  * @param {Object|string} requestData - Request payload
  * @param {boolean} forceFallback - Debug flag to force rule-based fallback
@@ -209,45 +292,71 @@ export async function getRobustRequestAnalysis(requestData, forceFallback = fals
       fallbackReason: 'Forced via debug flag'
     };
   } else {
-    try {
-      const rawAiResult = await analyzeRequestWithAI(payload);
-      const validation = validateAIResponse(rawAiResult);
+    // Try Groq first if key exists, then Gemini, then Rule-Based Fallback
+    const hasGroqKey = process.env.GROQ_API_KEY && process.env.GROQ_API_KEY.trim();
+    const hasGeminiKey = process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY.trim() && !process.env.GEMINI_API_KEY.startsWith('AQ.');
 
-      if (validation.isValid) {
-        baseAnalysis = {
-          ...rawAiResult,
-          analysisSource: 'GEMINI'
-        };
-      } else {
-        console.warn('[AI Service] Gemini response validation failed. Falling back to rule-based analyzer.');
-        const fallback = analyzeRequestRuleBased(description);
-        baseAnalysis = {
-          ...fallback,
-          analysisSource: 'RULE_BASED_FALLBACK',
-          fallbackReason: `Validation failed: ${validation.errors.join('; ')}`
-        };
+    let success = false;
+
+    // 1. Attempt Groq
+    if (hasGroqKey) {
+      try {
+        const rawResult = await analyzeRequestWithGroq(payload);
+        const validation = validateAIResponse(rawResult);
+        if (validation.isValid) {
+          baseAnalysis = {
+            ...rawResult,
+            analysisSource: 'GROQ'
+          };
+          success = true;
+        } else {
+          console.warn('[AI Service] Groq response validation failed:', validation.errors);
+        }
+      } catch (error) {
+        console.warn(`[AI Service] Groq analysis failed (${error.message}). Trying Gemini...`);
       }
-    } catch (error) {
-      console.warn(`[AI Service] ${error.message}. Seamlessly using Rule-Based Fallback Analyzer.`);
+    }
+
+    // 2. Attempt Gemini if Groq failed or wasn't configured
+    if (!success && hasGeminiKey) {
+      try {
+        const rawResult = await analyzeRequestWithAI(payload);
+        const validation = validateAIResponse(rawResult);
+        if (validation.isValid) {
+          baseAnalysis = {
+            ...rawResult,
+            analysisSource: 'GEMINI'
+          };
+          success = true;
+        } else {
+          console.warn('[AI Service] Gemini response validation failed.');
+        }
+      } catch (error) {
+        console.warn(`[AI Service] Gemini analysis failed (${error.message}).`);
+      }
+    }
+
+    // 3. Fallback to Rule-Based
+    if (!success) {
+      console.warn('[AI Service] AI analysis unavailable. Using Rule-Based Fallback Analyzer.');
       const fallback = analyzeRequestRuleBased(description);
       baseAnalysis = {
         ...fallback,
         analysisSource: 'RULE_BASED_FALLBACK',
-        fallbackReason: error.message
+        fallbackReason: 'AI engines exhausted or unavailable'
       };
     }
   }
 
-  // 1. Apply Backend Safety Override Check
+  // Apply Safety Override Check
   const safety = applySafetyOverride(description, baseAnalysis.priority, baseAnalysis.priorityReason);
-  
   const finalPriority = safety.priority;
   const finalPriorityReason = safety.priorityReason;
 
-  // 2. Map Category to Department via Backend Matrix (Gemini does not control department)
+  // Map Category to Department via Backend Matrix
   const deptInfo = getDepartmentForCategory(baseAnalysis.category);
 
-  // 3. Calculate SLA Hours and Due At using SLA Utility (Gemini does not calculate SLA)
+  // Calculate SLA Hours and Due At using SLA Utility
   const slaHours = getSlaHours(finalPriority);
   const dueAt = calculateDueAt(createdAt, slaHours).toISOString();
 
@@ -273,6 +382,5 @@ export async function getRobustRequestAnalysis(requestData, forceFallback = fals
  * Placeholder / fallback request analyzer matching expected Phase 2 schema.
  */
 export async function analyzeRequest(description) {
-  console.warn('Gemini Service called.');
   return analyzeRequestRuleBased(description);
 }
