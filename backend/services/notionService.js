@@ -70,6 +70,31 @@ function richText(content) {
 }
 
 /**
+ * Helper to format property values according to schema type.
+ */
+function formatPropertyValue(propSchema, value) {
+  if (!propSchema || value === undefined || value === null) return null;
+  switch (propSchema.type) {
+    case 'title':
+      return { title: richText(String(value)) };
+    case 'rich_text':
+      return { rich_text: richText(String(value)) };
+    case 'select':
+      return { select: { name: String(value) } };
+    case 'email':
+      return { email: String(value) };
+    case 'number':
+      return { number: Number(value) };
+    case 'date':
+      return { date: { start: new Date(value).toISOString() } };
+    case 'checkbox':
+      return { checkbox: Boolean(value) };
+    default:
+      return null;
+  }
+}
+
+/**
  * Helper to parse Notion property values cleanly.
  */
 function parseProperties(properties) {
@@ -291,10 +316,14 @@ export async function getRequest(requestId) {
   }
 
   try {
+    const dbSchema = await notion.databases.retrieve({ database_id: process.env.NOTION_REQUESTS_DATABASE_ID });
+    const schemaProps = dbSchema.properties || {};
+    const titleKey = Object.keys(schemaProps).find(key => schemaProps[key].type === 'title') || 'Request ID';
+
     const response = await notion.databases.query({
       database_id: process.env.NOTION_REQUESTS_DATABASE_ID,
       filter: {
-        property: 'Request ID',
+        property: titleKey,
         title: {
           equals: requestId
         }
@@ -303,7 +332,9 @@ export async function getRequest(requestId) {
     });
 
     if (response.results.length === 0) {
-      return null;
+      const allRequests = await getRequests();
+      const match = allRequests.find(r => r[titleKey] === requestId || r['Request ID'] === requestId || r['Name'] === requestId);
+      return match || null;
     }
 
     const page = response.results[0];
@@ -313,7 +344,13 @@ export async function getRequest(requestId) {
     };
   } catch (error) {
     console.error(`Error fetching request ${requestId} from Notion:`, error.message);
-    throw new Error('Notion database query failed: ' + error.message);
+    try {
+      const allRequests = await getRequests();
+      const match = allRequests.find(r => r['Request ID'] === requestId || r['Name'] === requestId);
+      return match || null;
+    } catch (e) {
+      throw new Error('Notion database query failed: ' + error.message);
+    }
   }
 }
 
@@ -436,6 +473,53 @@ export async function updateRequest(requestId, updates) {
 }
 
 /**
+ * Generate the next Log ID by querying the Action Logs database.
+ * If empty, defaults to LOG-0001.
+ */
+export async function getNextLogId() {
+  validateConfig();
+
+  if (process.env.MOCK_NOTION === 'true') {
+    if (mockActionLogsDb.length === 0) {
+      return 'LOG-0001';
+    }
+    const ids = mockActionLogsDb.map(l => {
+      const match = (l['Log ID'] || l['Name'] || '').match(/LOG-(\d+)/);
+      return match ? parseInt(match[1], 10) : 0;
+    });
+    const maxVal = Math.max(...ids, 0);
+    return `LOG-${String(maxVal + 1).padStart(4, '0')}`;
+  }
+
+  try {
+    const dbSchema = await notion.databases.retrieve({ database_id: process.env.NOTION_ACTION_LOGS_DATABASE_ID });
+    const schemaProps = dbSchema.properties || {};
+    const titleKey = Object.keys(schemaProps).find(key => schemaProps[key].type === 'title') || 'Log ID';
+
+    const response = await notion.databases.query({
+      database_id: process.env.NOTION_ACTION_LOGS_DATABASE_ID,
+      page_size: 100
+    });
+
+    if (response.results.length === 0) {
+      return 'LOG-0001';
+    }
+
+    const ids = response.results.map(page => {
+      const parsed = parseProperties(page.properties);
+      const titleVal = parsed[titleKey] || '';
+      const match = titleVal.match(/LOG-(\d+)/);
+      return match ? parseInt(match[1], 10) : 0;
+    });
+
+    const maxVal = Math.max(...ids, 0);
+    return `LOG-${String(maxVal + 1).padStart(4, '0')}`;
+  } catch (error) {
+    return `LOG-${Date.now()}-${Math.floor(1000 + Math.random() * 9000)}`;
+  }
+}
+
+/**
  * Create an action log entry.
  */
 export async function createActionLog(logData) {
@@ -444,11 +528,12 @@ export async function createActionLog(logData) {
     requestId,
     action,
     reason = '',
-    performedBy = 'System',
+    performedBy = 'SYSTEM',
     result = 'SUCCESS'
   } = logData;
 
-  const logId = `LOG-${Date.now()}-${Math.floor(1000 + Math.random() * 9000)}`;
+  const logId = logData.logId || await getNextLogId();
+  const timestamp = new Date().toISOString();
 
   if (process.env.MOCK_NOTION === 'true') {
     const mockLog = {
@@ -458,7 +543,7 @@ export async function createActionLog(logData) {
       'Action': action,
       'Reason': reason,
       'Performed By': performedBy,
-      'Timestamp': new Date().toISOString(),
+      'Timestamp': timestamp,
       'Result': result
     };
     mockActionLogsDb.push(mockLog);
@@ -477,12 +562,17 @@ export async function createActionLog(logData) {
       [titleKey]: { title: richText(logId) }
     };
 
-    if (schemaProps['Request ID']) properties['Request ID'] = { rich_text: richText(requestId) };
-    if (schemaProps['Action']) properties['Action'] = { select: { name: action } };
-    if (schemaProps['Reason']) properties['Reason'] = { rich_text: richText(reason) };
-    if (schemaProps['Performed By']) properties['Performed By'] = { rich_text: richText(performedBy) };
-    if (schemaProps['Timestamp']) properties['Timestamp'] = { date: { start: new Date().toISOString() } };
-    if (schemaProps['Result']) properties['Result'] = { select: { name: result } };
+    if (schemaProps['Request ID']) properties['Request ID'] = formatPropertyValue(schemaProps['Request ID'], requestId);
+    if (schemaProps['Action']) properties['Action'] = formatPropertyValue(schemaProps['Action'], action);
+    if (schemaProps['Reason']) properties['Reason'] = formatPropertyValue(schemaProps['Reason'], reason);
+    if (schemaProps['Performed By']) properties['Performed By'] = formatPropertyValue(schemaProps['Performed By'], performedBy);
+    if (schemaProps['Timestamp']) properties['Timestamp'] = formatPropertyValue(schemaProps['Timestamp'], timestamp);
+    if (schemaProps['Result']) properties['Result'] = formatPropertyValue(schemaProps['Result'], result);
+
+    // Clean up any null property values
+    Object.keys(properties).forEach(k => {
+      if (properties[k] === null) delete properties[k];
+    });
 
     const response = await notion.pages.create({
       parent: { database_id: process.env.NOTION_ACTION_LOGS_DATABASE_ID },
@@ -499,6 +589,41 @@ export async function createActionLog(logData) {
       notionPageId: null,
       'Log ID': logId
     };
+  }
+}
+
+/**
+ * Get action logs for a request or all logs.
+ */
+export async function getActionLogs(requestId = null) {
+  validateConfig();
+
+  if (process.env.MOCK_NOTION === 'true') {
+    if (requestId) {
+      return mockActionLogsDb.filter(l => l['Request ID'] === requestId);
+    }
+    return [...mockActionLogsDb];
+  }
+
+  try {
+    const response = await notion.databases.query({
+      database_id: process.env.NOTION_ACTION_LOGS_DATABASE_ID,
+      page_size: 100
+    });
+
+    const parsedLogs = response.results.map(page => ({
+      notionPageId: page.id,
+      ...parseProperties(page.properties)
+    }));
+
+    if (requestId) {
+      return parsedLogs.filter(log => log['Request ID'] === requestId || log['Name'] === requestId || log['Log ID'] === requestId);
+    }
+
+    return parsedLogs;
+  } catch (error) {
+    console.error('Error fetching action logs from Notion:', error.message);
+    return [];
   }
 }
 

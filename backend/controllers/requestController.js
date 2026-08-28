@@ -74,20 +74,36 @@ export async function createRequest(req, res, next) {
 
     const newRequest = await notionService.createRequest(notionRequestData);
 
-    // 5. Create action log entry
+    // 5. Create action log entries
     await notionService.createActionLog({
       requestId,
       action: 'REQUEST_CREATED',
       reason: 'Request submitted successfully through the web channel.',
-      performedBy: 'System',
+      performedBy: 'SYSTEM',
       result: 'SUCCESS'
     });
 
     await notionService.createActionLog({
       requestId,
       action: 'AI_ANALYZED',
-      reason: `Rule-based AI analyzed request as ${analysis.category} / ${analysis.subcategory} (${analysis.priority} priority). SLA set to ${analysis.slaHours} hours.`,
-      performedBy: 'AI_Agent',
+      reason: `Rule-based AI analyzed intent as '${analysis.intent}', category as '${analysis.category}' and subcategory as '${analysis.subcategory}' (Confidence: ${analysis.aiConfidence}).`,
+      performedBy: 'SYSTEM',
+      result: 'SUCCESS'
+    });
+
+    await notionService.createActionLog({
+      requestId,
+      action: 'PRIORITY_ASSIGNED',
+      reason: `Priority set to '${analysis.priority}' with SLA threshold of ${analysis.slaHours} hours. Reason: ${analysis.priorityReason}`,
+      performedBy: 'SYSTEM',
+      result: 'SUCCESS'
+    });
+
+    await notionService.createActionLog({
+      requestId,
+      action: 'DEPARTMENT_ASSIGNED',
+      reason: `Automatically routed and assigned to department '${analysis.department}'.`,
+      performedBy: 'SYSTEM',
       result: 'SUCCESS'
     });
 
@@ -188,7 +204,7 @@ export async function updateRequest(req, res, next) {
     const updated = await notionService.updateRequest(id, updates);
 
     // Logging actions based on what changed
-    const performer = 'Admin';
+    const performer = req.body.performedBy || 'SYSTEM';
 
     if (status !== undefined && status !== existing.Status) {
       let actionType = 'STATUS_CHANGED';
@@ -219,7 +235,7 @@ export async function updateRequest(req, res, next) {
       await notionService.createActionLog({
         requestId: id,
         action: 'STATUS_CHANGED',
-        reason: `Request assigned to '${assignedTo}'.`,
+        reason: `Request assigned to staff member '${assignedTo}'.`,
         performedBy: performer,
         result: 'SUCCESS'
       });
@@ -229,7 +245,7 @@ export async function updateRequest(req, res, next) {
       await notionService.createActionLog({
         requestId: id,
         action: 'RESOLVED',
-        reason: `Resolution notes updated: "${resolution}"`,
+        reason: `Resolution notes recorded: "${resolution}"`,
         performedBy: performer,
         result: 'SUCCESS'
       });
