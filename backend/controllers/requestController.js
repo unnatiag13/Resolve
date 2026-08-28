@@ -2,6 +2,7 @@ import * as notionService from '../services/notionService.js';
 import * as slaUtil from '../utils/sla.js';
 import { analyzeRequest } from '../services/requestAnalyzer.js';
 import { getRobustRequestAnalysis } from '../services/geminiService.js';
+import { validateAndProcessTransition, logStatusTransition } from '../utils/statusWorkflow.js';
 
 /**
  * Helper to validate email format.
@@ -201,25 +202,17 @@ export async function updateRequest(req, res, next) {
     if (department !== undefined) updates.department = department;
     if (resolution !== undefined) updates.resolution = resolution;
 
-    // Update in Notion
-    const updated = await notionService.updateRequest(id, updates);
-
-    // Logging actions based on what changed
     const performer = req.body.performedBy || 'SYSTEM';
 
-    if (status !== undefined && status !== existing.Status) {
-      let actionType = 'STATUS_CHANGED';
-      if (status === 'RESOLVED') actionType = 'RESOLVED';
-      if (status === 'CLOSED') actionType = 'CLOSED';
-      if (status === 'ESCALATED') actionType = 'ESCALATED';
+    // Validate the status transition and process resolution rules
+    const verifiedUpdates = await validateAndProcessTransition(existing, updates, performer);
 
-      await notionService.createActionLog({
-        requestId: id,
-        action: actionType,
-        reason: `Status changed from '${existing.Status}' to '${status}'.`,
-        performedBy: performer,
-        result: 'SUCCESS'
-      });
+    // Update in Notion
+    const updated = await notionService.updateRequest(id, verifiedUpdates);
+
+    // Logging status change action
+    if (verifiedUpdates.status !== undefined && verifiedUpdates.status !== (existing.Status || existing.status)) {
+      await logStatusTransition(id, existing.Status || existing.status, verifiedUpdates.status, performer);
     }
 
     if (department !== undefined && department !== existing.Department) {

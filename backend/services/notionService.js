@@ -200,7 +200,7 @@ export async function getNextRequestId() {
 let requestsSchemaVerified = false;
 
 /**
- * Ensure the Escalated At property exists in the Requests Notion Database schema.
+ * Ensure the Escalated At and Resolved At properties exist in the Requests Notion Database schema.
  */
 export async function ensureRequestsSchema() {
   if (requestsSchemaVerified) return;
@@ -211,14 +211,20 @@ export async function ensureRequestsSchema() {
   try {
     const db = await notion.databases.retrieve({ database_id: process.env.NOTION_REQUESTS_DATABASE_ID });
     const schemaProps = db.properties || {};
-    
+    const missingProps = {};
+
     if (!schemaProps['Escalated At']) {
-      console.log('[Notion API] Adding Escalated At property to Requests database schema...');
+      missingProps['Escalated At'] = { date: {} };
+    }
+    if (!schemaProps['Resolved At']) {
+      missingProps['Resolved At'] = { date: {} };
+    }
+
+    if (Object.keys(missingProps).length > 0) {
+      console.log('[Notion API] Adding missing properties to Requests database schema...', Object.keys(missingProps));
       await notion.databases.update({
         database_id: process.env.NOTION_REQUESTS_DATABASE_ID,
-        properties: {
-          'Escalated At': { date: {} }
-        }
+        properties: missingProps
       });
     }
     requestsSchemaVerified = true;
@@ -252,7 +258,8 @@ export async function createRequest(requestData) {
     aiConfidence = 0,
     incidentId = '',
     resolution = '',
-    escalatedAt = null
+    escalatedAt = null,
+    resolvedAt = null
   } = requestData;
 
   const nowIso = new Date().toISOString();
@@ -280,6 +287,7 @@ export async function createRequest(requestData) {
       'Incident ID': incidentId,
       'Resolution': resolution,
       'Escalated At': escalatedAt ? new Date(escalatedAt).toISOString() : null,
+      'Resolved At': resolvedAt ? new Date(resolvedAt).toISOString() : null,
       'Created At': nowIso,
       'Updated At': nowIso
     };
@@ -320,6 +328,7 @@ export async function createRequest(requestData) {
     if (schemaProps['Incident ID']) properties['Incident ID'] = { rich_text: richText(incidentId) };
     if (schemaProps['Resolution']) properties['Resolution'] = { rich_text: richText(resolution) };
     if (schemaProps['Escalated At'] && escalatedAt) properties['Escalated At'] = { date: { start: new Date(escalatedAt).toISOString() } };
+    if (schemaProps['Resolved At'] && resolvedAt) properties['Resolved At'] = { date: { start: new Date(resolvedAt).toISOString() } };
     if (schemaProps['Created At']) properties['Created At'] = { date: { start: nowIso } };
     if (schemaProps['Updated At']) properties['Updated At'] = { date: { start: nowIso } };
 
@@ -456,6 +465,7 @@ export async function updateRequest(requestId, updates) {
     if (updates.incidentId !== undefined) updatedRecord['Incident ID'] = updates.incidentId;
     if (updates.resolution !== undefined) updatedRecord['Resolution'] = updates.resolution;
     if (updates.escalatedAt !== undefined) updatedRecord['Escalated At'] = updates.escalatedAt ? new Date(updates.escalatedAt).toISOString() : null;
+    if (updates.resolvedAt !== undefined) updatedRecord['Resolved At'] = updates.resolvedAt ? new Date(updates.resolvedAt).toISOString() : null;
 
     mockRequestsDb[index] = updatedRecord;
     return updatedRecord;
@@ -491,6 +501,9 @@ export async function updateRequest(requestId, updates) {
     if (updates.resolution !== undefined) properties['Resolution'] = { rich_text: richText(updates.resolution) };
     if (updates.escalatedAt !== undefined) {
       properties['Escalated At'] = updates.escalatedAt ? { date: { start: new Date(updates.escalatedAt).toISOString() } } : { date: null };
+    }
+    if (updates.resolvedAt !== undefined) {
+      properties['Resolved At'] = updates.resolvedAt ? { date: { start: new Date(updates.resolvedAt).toISOString() } } : { date: null };
     }
     
     // Always update the 'Updated At' timestamp
