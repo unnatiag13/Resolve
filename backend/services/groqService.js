@@ -230,7 +230,7 @@ Request Description: "${description.trim()}"
 Location: "${location ? location.trim() : 'Unspecified'}"
 Requester Name: "${requesterName ? requesterName.trim() : 'Student/Staff'}"`;
 
-  const modelsToTry = ['groq/compound-mini', 'groq/compound', 'llama-3.3-70b-versatile', 'llama-3.1-8b-instant'];
+  const modelsToTry = ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant', 'mixtral-8x7b-32768'];
   let lastError = null;
   let responseData = null;
 
