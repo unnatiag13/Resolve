@@ -1,6 +1,7 @@
 import express from 'express';
 import cors from 'cors';
 import requestRoutes from './routes/requestRoutes.js';
+import departmentRouter from './routes/departmentRoutes.js';
 import { getAnalyticsOverview } from './controllers/requestController.js';
 import { testGeminiConnection, analyzeRequestWithAI, getRobustRequestAnalysis } from './services/groqService.js';
 import { monitorSlaStates, getMonitoringOverview, getRequestsBySlaState } from './services/slaMonitoringService.js';
@@ -138,6 +139,7 @@ app.post('/api/requests/:id/suggestions', async (req, res, next) => {
   }
 });
 
+app.use('/api/departments', departmentRouter);
 app.use('/api/requests', requestRoutes);
 app.get('/api/analytics/overview', getAnalyticsOverview);
 
