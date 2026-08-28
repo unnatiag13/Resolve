@@ -284,3 +284,101 @@ export async function monitorSlaStates() {
 
   return summary;
 }
+
+/**
+ * Generate monitoring analytics overview report.
+ *
+ * @returns {Promise<Object>} Analytics report
+ */
+export async function getMonitoringOverview() {
+  const requests = await getRequests();
+  const now = new Date();
+
+  let activeCount = 0;
+  let normalCount = 0;
+  let warningCount = 0;
+  let breachedCount = 0;
+  let escalatedCount = 0;
+  let resolvedCount = 0;
+
+  for (const req of requests) {
+    const statusStr = (req['Status'] || req['status'] || '').toUpperCase();
+    const isTerminal = ['RESOLVED', 'VERIFIED', 'CLOSED'].includes(statusStr);
+
+    if (isTerminal) {
+      resolvedCount++;
+      continue;
+    }
+
+    activeCount++;
+
+    const slaState = calculateRequestSlaState(req, now);
+    const escalatedAt = req['Escalated At'] || req['escalatedAt'];
+
+    if (escalatedAt) {
+      escalatedCount++;
+    }
+
+    if (slaState.state === 'BREACHED') {
+      breachedCount++;
+    } else if (slaState.state === 'WARNING') {
+      warningCount++;
+    } else {
+      normalCount++;
+    }
+  }
+
+  const totalChecked = requests.length;
+  // SLA Compliance Rate: Percentage of requests that have NOT breached
+  const complianceRate = totalChecked > 0 
+    ? Number((((totalChecked - breachedCount) / totalChecked) * 100).toFixed(2))
+    : 100.00;
+
+  return {
+    checkedAt: now.toISOString(),
+    totalChecked,
+    totalActive: activeCount,
+    normal: normalCount,
+    warning: warningCount,
+    breached: breachedCount,
+    escalated: escalatedCount,
+    resolved: resolvedCount,
+    slaComplianceRate: complianceRate
+  };
+}
+
+/**
+ * Retrieve active requests filtered by their SLA monitoring state.
+ *
+ * @param {string} state - NORMAL, WARNING, or BREACHED
+ * @returns {Promise<Array>} List of requests matching the state
+ */
+export async function getRequestsBySlaState(state) {
+  const requests = await getRequests();
+  const now = new Date();
+  const targetState = state.toUpperCase();
+  const matched = [];
+
+  for (const req of requests) {
+    const statusStr = (req['Status'] || req['status'] || '').toUpperCase();
+    const isTerminal = ['RESOLVED', 'VERIFIED', 'CLOSED'].includes(statusStr);
+    if (isTerminal) continue;
+
+    const slaState = calculateRequestSlaState(req, now);
+
+    if (slaState.state === targetState) {
+      matched.push({
+        id: req['Request ID'] || req['Name'] || req.id,
+        description: req['Description'] || '',
+        status: req['Status'] || req['status'],
+        priority: req['Priority'] || 'MEDIUM',
+        slaHours: Number(req['SLA Hours'] || 24),
+        dueAt: slaState.dueAt,
+        remainingHours: slaState.remainingHours,
+        escalatedAt: req['Escalated At'] || req['escalatedAt'] || null
+      });
+    }
+  }
+
+  return matched;
+}

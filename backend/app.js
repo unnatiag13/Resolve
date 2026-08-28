@@ -3,7 +3,7 @@ import cors from 'cors';
 import requestRoutes from './routes/requestRoutes.js';
 import { getAnalyticsOverview } from './controllers/requestController.js';
 import { testGeminiConnection, analyzeRequestWithAI, getRobustRequestAnalysis } from './services/geminiService.js';
-import { monitorSlaStates } from './services/slaMonitoringService.js';
+import { monitorSlaStates, getMonitoringOverview, getRequestsBySlaState } from './services/slaMonitoringService.js';
 import errorHandler from './middleware/errorHandler.js';
 
 const app = express();
@@ -71,6 +71,44 @@ app.get('/api/sla/monitor', async (req, res, next) => {
     res.status(200).json({
       success: true,
       data: report
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get('/api/monitoring/overview', async (req, res, next) => {
+  try {
+    const overview = await getMonitoringOverview();
+    res.status(200).json({
+      success: true,
+      data: overview
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get('/api/monitoring/requests', async (req, res, next) => {
+  try {
+    const { state } = req.query;
+    if (!state) {
+      return res.status(400).json({
+        success: false,
+        message: "Query parameter 'state' is required (Allowed values: NORMAL, WARNING, BREACHED)"
+      });
+    }
+    const allowed = ['NORMAL', 'WARNING', 'BREACHED'];
+    if (!allowed.includes(state.toUpperCase())) {
+      return res.status(400).json({
+        success: false,
+        message: `Invalid state parameter. Allowed values: ${allowed.join(', ')}`
+      });
+    }
+    const list = await getRequestsBySlaState(state);
+    res.status(200).json({
+      success: true,
+      data: list
     });
   } catch (error) {
     next(error);
