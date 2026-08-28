@@ -74,15 +74,19 @@ function isSimilarLocation(loc1, loc2) {
  * Checks for semantic duplicates of an incoming request.
  *
  * @param {Object} newRequest - Request detail containing category, description, location
+ * @param {string} newRequestId - Optional request ID to exclude from candidates
  * @returns {Promise<Object>} Object describing match type and parent request details
  */
-export async function detectDuplicateRequest(newRequest) {
+export async function detectDuplicateRequest(newRequest, newRequestId = null) {
   const category = (newRequest.category || '').toUpperCase();
   const location = newRequest.location || '';
   const description = newRequest.description || '';
 
   const activeRequests = await getRequests();
   const unresolvedRequests = activeRequests.filter(req => {
+    const id = req['Request ID'] || req.Name || req.id;
+    if (newRequestId && id === newRequestId) return false;
+
     const status = (req['Status'] || req.status || '').toUpperCase();
     const isUnresolved = ['NEW', 'TRIAGED', 'ASSIGNED', 'IN_PROGRESS', 'WAITING', 'SLA_BREACHED', 'ESCALATED'].includes(status);
     return isUnresolved;
@@ -197,7 +201,7 @@ export async function processRequestIncidentLinking(newRequestId, newRequestData
     category: newRequestData.category,
     location: newRequestData.location,
     description: newRequestData.description
-  });
+  }, newRequestId);
 
   if (check.matchType === 'CONFIRMED_DUPLICATE' || check.matchType === 'POSSIBLE_DUPLICATE') {
     const parent = check.matchedRequest;
