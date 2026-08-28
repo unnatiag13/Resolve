@@ -230,31 +230,47 @@ Request Description: "${description.trim()}"
 Location: "${location ? location.trim() : 'Unspecified'}"
 Requester Name: "${requesterName ? requesterName.trim() : 'Student/Staff'}"`;
 
-  try {
-    const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${apiKey.trim()}`
-      },
-      body: JSON.stringify({
-        model: 'llama-3.3-70b-specdec',
-        response_format: { type: 'json_object' },
-        messages: [
-          { role: 'system', content: systemInstruction },
-          { role: 'user', content: promptText }
-        ],
-        temperature: 0.1
-      })
-    });
+  const modelsToTry = ['groq/compound-mini', 'groq/compound', 'llama-3.3-70b-versatile', 'llama-3.1-8b-instant'];
+  let lastError = null;
+  let responseData = null;
 
-    if (!res.ok) {
-      const errText = await res.text();
-      throw new Error(`Groq API returned status ${res.status}: ${errText}`);
+  for (const modelName of modelsToTry) {
+    try {
+      const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${apiKey.trim()}`
+        },
+        body: JSON.stringify({
+          model: modelName,
+          response_format: { type: 'json_object' },
+          messages: [
+            { role: 'system', content: systemInstruction },
+            { role: 'user', content: promptText }
+          ],
+          temperature: 0.1
+        })
+      });
+
+      if (res.ok) {
+        responseData = await res.json();
+        break;
+      } else {
+        const errText = await res.text();
+        lastError = new Error(`Model ${modelName} unavailable: ${errText}`);
+      }
+    } catch (err) {
+      lastError = err;
     }
+  }
 
-    const data = await res.json();
-    const replyText = data.choices?.[0]?.message?.content?.trim() || '{}';
+  if (!responseData) {
+    throw lastError || new Error('All Groq model attempts failed.');
+  }
+
+  try {
+    const replyText = responseData.choices?.[0]?.message?.content?.trim() || '{}';
     const parsed = JSON.parse(replyText);
 
     return {
@@ -266,7 +282,7 @@ Requester Name: "${requesterName ? requesterName.trim() : 'Student/Staff'}"`;
       aiConfidence: typeof parsed.aiConfidence === 'number' ? parsed.aiConfidence : 0.95
     };
   } catch (error) {
-    throw new Error(`Groq API analysis failed: ${error.message}`);
+    throw new Error(`Groq API parsed response error: ${error.message}`);
   }
 }
 
