@@ -19,6 +19,8 @@ export async function createRequest(req, res, next) {
   try {
     const { requesterName, requesterEmail, location, description, forceFallback } = req.body;
 
+    console.log(`[API Server] POST /api/requests received from ${requesterName} (${requesterEmail}). Description: "${description ? description.substring(0, 50) : ''}..."`);
+
     // 1. Validate the request body
     if (!requesterName || !requesterName.trim()) {
       const err = new Error('Requester name is required.');
