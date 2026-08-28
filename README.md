@@ -48,7 +48,6 @@ SLA is missed
    ↓
 User complains again
 ```
-````markdown
 ### The missing layer is accountability.
 
 Most existing systems are designed to **record tickets**.
