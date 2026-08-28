@@ -1,4 +1,5 @@
 import { getRequests, updateRequest, createActionLog } from './notionService.js';
+import { GoogleGenAI } from '@google/genai';
 
 /**
  * Helper to generate the next unique Incident ID from existing requests in Notion.
@@ -105,12 +106,11 @@ export async function detectDuplicateRequest(newRequest, newRequestId = null) {
 
   // 2. Perform semantic verification using AI
   if (process.env.GROQ_API_KEY || process.env.GEMINI_API_KEY) {
-    try {
-      const candidatesPrompt = candidates.map((c, i) => `Candidate ${i + 1}:
+    const candidatesPrompt = candidates.map((c, i) => `Candidate ${i + 1}:
 - Request ID: ${c['Request ID'] || c['Name'] || c.id}
 - Description: "${c['Description'] || c.description}"`).join('\n\n');
 
-      const prompt = `You are a ticket classifier. Determine if the new request is a duplicate of any existing candidates.
+    const prompt = `You are a ticket duplicate detector. Determine if the new request is a duplicate of any existing candidates.
 New Request:
 - Description: "${description}"
 
@@ -127,34 +127,74 @@ Return a JSON object matching exactly this schema:
 Criteria for duplicate: The descriptions must describe the exact same physical issue/problem occurring at the same place. If they describe different issues in the same building, they are not duplicates.
 Do not output markdown code wrapper. Output JSON only.`;
 
-      let contentText = null;
+    let contentText = null;
+    let source = null;
 
-      // Try Groq
-      if (process.env.GROQ_API_KEY) {
-        const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${process.env.GROQ_API_KEY}`,
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({
-            model: 'llama-3.1-8b-instant',
-            messages: [{ role: 'user', content: prompt }],
-            response_format: { type: 'json_object' }
-          })
-        });
+    // Try Groq first
+    if (process.env.GROQ_API_KEY) {
+      const models = ['groq/compound-mini', 'groq/compound', 'llama-3.3-70b-versatile', 'llama-3.1-8b-instant'];
+      for (const model of models) {
+        try {
+          const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${process.env.GROQ_API_KEY}`,
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+              model,
+              messages: [{ role: 'user', content: prompt }],
+              response_format: { type: 'json_object' }
+            })
+          });
 
-        if (response.ok) {
-          const json = await response.json();
-          contentText = json.choices?.[0]?.message?.content;
+          if (response.ok) {
+            const json = await response.json();
+            contentText = json.choices?.[0]?.message?.content;
+            if (contentText) {
+              source = 'GROQ';
+              break;
+            }
+          }
+        } catch (e) {
+          console.warn(`Groq duplicate check failed with model ${model}:`, e.message);
         }
       }
+    }
 
+    // Try Gemini second
+    if (!contentText && process.env.GEMINI_API_KEY) {
+      const models = ['gemini-2.5-flash', 'gemini-2.5-flash-lite', 'gemini-flash-latest'];
+      const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+      for (const model of models) {
+        try {
+          const response = await ai.models.generateContent({
+            model,
+            contents: prompt,
+            config: {
+              responseMimeType: 'application/json',
+              systemInstruction: 'You are a ticket duplicate detector. Compare descriptions and output JSON matching the requested schema.'
+            }
+          });
+
+          if (response.text) {
+            contentText = response.text;
+            source = 'GEMINI';
+            break;
+          }
+        } catch (e) {
+          console.warn(`Gemini duplicate check failed with model ${model}:`, e.message);
+        }
+      }
+    }
+
+    try {
       if (contentText) {
         const parsed = JSON.parse(contentText);
         if (parsed.isDuplicate && parsed.matchedRequestId) {
           const matched = candidates.find(c => (c['Request ID'] || c['Name'] || c.id) === parsed.matchedRequestId);
           if (matched) {
+            console.log(`[Duplicate Detector] Match found via ${source}: ${parsed.matchedRequestId} (Confidence: ${parsed.confidence})`);
             return {
               matchType: parsed.confidence > 0.85 ? 'CONFIRMED_DUPLICATE' : 'POSSIBLE_DUPLICATE',
               matchedRequest: matched
@@ -163,7 +203,7 @@ Do not output markdown code wrapper. Output JSON only.`;
         }
       }
     } catch (err) {
-      console.warn('[Duplicate Detector] AI verification failed, using keyword fallback:', err.message);
+      console.warn('[Duplicate Detector] AI verification parsing failed, using keyword fallback:', err.message);
     }
   }
 
