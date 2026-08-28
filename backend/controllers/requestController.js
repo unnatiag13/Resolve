@@ -1,7 +1,7 @@
 import * as notionService from '../services/notionService.js';
 import * as slaUtil from '../utils/sla.js';
 import { analyzeRequest } from '../services/requestAnalyzer.js';
-import { getRobustRequestAnalysis } from '../services/geminiService.js';
+import { getRobustRequestAnalysis } from '../services/groqService.js';
 import { validateAndProcessTransition, logStatusTransition } from '../utils/statusWorkflow.js';
 
 /**

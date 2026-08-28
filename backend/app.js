@@ -2,7 +2,7 @@ import express from 'express';
 import cors from 'cors';
 import requestRoutes from './routes/requestRoutes.js';
 import { getAnalyticsOverview } from './controllers/requestController.js';
-import { testGeminiConnection, analyzeRequestWithAI, getRobustRequestAnalysis } from './services/geminiService.js';
+import { testGeminiConnection, analyzeRequestWithAI, getRobustRequestAnalysis } from './services/groqService.js';
 import { monitorSlaStates, getMonitoringOverview, getRequestsBySlaState } from './services/slaMonitoringService.js';
 import { getResolutionSuggestions } from './services/resolutionSuggestionService.js';
 import { getRequest } from './services/notionService.js';
