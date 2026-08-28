@@ -11,3 +11,10 @@ backend/getInlineDatabaseIds.js
 backend/getNotionDatabases.js
 backend/scan.js
 backend/tools/debug-post.js
+
+# Frontend specific ignored items
+frontend/node_modules/
+frontend/dist/
+frontend/.env
+frontend/.env.local
+frontend/.env.*.local
