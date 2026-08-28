@@ -3,7 +3,7 @@ import { isSlaBreached } from '../utils/sla.js';
 import { triggerNotification, EVENTS } from './notificationService.js';
 
 // Unresolved statuses considered active under SLA monitoring
-const UNRESOLVED_STATUSES = ['NEW', 'TRIAGED', 'ASSIGNED', 'IN_PROGRESS'];
+const UNRESOLVED_STATUSES = ['NEW', 'TRIAGED', 'ASSIGNED', 'IN_PROGRESS', 'WAITING', 'ESCALATED'];
 const TERMINAL_STATUSES = ['RESOLVED', 'VERIFIED', 'CLOSED', 'SLA_BREACHED'];
 
 /**
@@ -23,7 +23,7 @@ export function calculateRequestSlaState(request, now = new Date()) {
   if (!isUnresolved) {
     return {
       status: statusStr,
-      state: statusStr === 'SLA_BREACHED' ? 'BREACHED' : 'RESOLVED',
+      state: statusStr === 'SLA_BREACHED' ? 'BREACHED' : (statusStr === 'CLOSED' ? 'CLOSED' : 'RESOLVED'),
       remainingHours: 0,
       dueAt: dueAtStr,
       isUnresolved: false
@@ -134,13 +134,21 @@ export async function processSlaBreaches() {
  */
 export async function processSlaEscalations() {
   const requests = await getRequests();
+  const allLogs = await getActionLogs();
   const now = new Date();
   const processed = [];
+
+  const escalatedLogRequestIds = new Set(
+    allLogs
+      .filter(log => (log['Action'] || log.action) === 'ESCALATED')
+      .map(log => log['Request ID'] || log.requestId || log.Name)
+  );
 
   for (const req of requests) {
     const statusStr = (req['Status'] || req['status'] || '').toUpperCase();
     const dueAtStr = req['Due At'] || req['dueAt'];
     const escalatedAt = req['Escalated At'] || req['escalatedAt'];
+    const requestId = req['Request ID'] || req['Name'] || req.id;
 
     // Skip resolved, verified, or closed requests
     const isTerminal = ['RESOLVED', 'VERIFIED', 'CLOSED'].includes(statusStr);
@@ -148,8 +156,7 @@ export async function processSlaEscalations() {
 
     // Check if deadline is passed and not already escalated
     const dueAtDate = new Date(dueAtStr);
-    if (now > dueAtDate && !escalatedAt) {
-      const requestId = req['Request ID'] || req['Name'] || req.id;
+    if (now > dueAtDate && !escalatedAt && !escalatedLogRequestIds.has(requestId)) {
       console.log(`[SLA Monitor] Escalating request ${requestId} (deadline passed: ${dueAtStr}).`);
 
       // 1. Mark as Escalated in Requests Notion database (updates Escalated At timestamp)
@@ -166,6 +173,8 @@ export async function processSlaEscalations() {
         performedBy: 'SLA_MONITOR',
         result: 'SUCCESS'
       });
+
+      escalatedLogRequestIds.add(requestId);
 
       processed.push({
         id: requestId,
