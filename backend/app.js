@@ -4,6 +4,8 @@ import requestRoutes from './routes/requestRoutes.js';
 import { getAnalyticsOverview } from './controllers/requestController.js';
 import { testGeminiConnection, analyzeRequestWithAI, getRobustRequestAnalysis } from './services/geminiService.js';
 import { monitorSlaStates, getMonitoringOverview, getRequestsBySlaState } from './services/slaMonitoringService.js';
+import { getResolutionSuggestions } from './services/resolutionSuggestionService.js';
+import { getRequest } from './services/notionService.js';
 import errorHandler from './middleware/errorHandler.js';
 
 const app = express();
@@ -109,6 +111,27 @@ app.get('/api/monitoring/requests', async (req, res, next) => {
     res.status(200).json({
       success: true,
       data: list
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/api/requests/:id/suggestions', async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const request = await getRequest(id);
+    if (!request) {
+      return res.status(404).json({
+        success: false,
+        message: `Request with ID ${id} not found.`
+      });
+    }
+
+    const suggestions = await getResolutionSuggestions(request);
+    res.status(200).json({
+      success: true,
+      data: suggestions
     });
   } catch (error) {
     next(error);
