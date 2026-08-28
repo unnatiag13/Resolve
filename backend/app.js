@@ -3,6 +3,7 @@ import cors from 'cors';
 import requestRoutes from './routes/requestRoutes.js';
 import { getAnalyticsOverview } from './controllers/requestController.js';
 import { testGeminiConnection, analyzeRequestWithAI, getRobustRequestAnalysis } from './services/geminiService.js';
+import { monitorSlaStates } from './services/slaMonitoringService.js';
 import errorHandler from './middleware/errorHandler.js';
 
 const app = express();
@@ -64,6 +65,18 @@ app.post('/api/analyze-ai', async (req, res, next) => {
 });
 
 // Register routes
+app.get('/api/sla/monitor', async (req, res, next) => {
+  try {
+    const report = await monitorSlaStates();
+    res.status(200).json({
+      success: true,
+      data: report
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
 app.use('/api/requests', requestRoutes);
 app.get('/api/analytics/overview', getAnalyticsOverview);
 
