@@ -294,12 +294,13 @@ export function normalizeIncomingPayload(payload = {}) {
  * @returns {string} Formatted WhatsApp reply message
  */
 export function formatConfirmationReply(requestData = {}) {
-  const reqId = requestData.id || requestData.requestId || 'REQ-xxxx';
+  const reqId = requestData.id || requestData.requestId || 'REQ-0001';
+  const category = requestData.category || 'GENERAL';
   const priority = requestData.priority || 'MEDIUM';
   const department = requestData.department || 'General Support';
   const sla = requestData.slaHours !== undefined ? `${requestData.slaHours} hours` : '24 hours';
 
-  return `Your request has been registered successfully.\n\nRequest ID: ${reqId}\nPriority: ${priority}\nDepartment: ${department}\nSLA: ${sla}\n\nWe will notify you when there are important updates.`;
+  return `Hello! Your request has been registered successfully.\n\nRequest ID: ${reqId}\nCategory: ${category}\nPriority: ${priority}\nDepartment: ${department}\nExpected SLA: ${sla}\n\nWe will notify the responsible department.\n\nThank you for reporting this issue.`;
 }
 
 /**

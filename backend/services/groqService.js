@@ -230,7 +230,7 @@ Request Description: "${description.trim()}"
 Location: "${location ? location.trim() : 'Unspecified'}"
 Requester Name: "${requesterName ? requesterName.trim() : 'Student/Staff'}"`;
 
-  const modelsToTry = ['llama-3.3-70b-versatile', 'llama3-8b-8192', 'gemma2-9b-it'];
+  const modelsToTry = ['llama-3.3-70b-versatile'];
   let lastError = null;
   let responseData = null;
 

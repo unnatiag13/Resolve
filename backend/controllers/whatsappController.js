@@ -4,7 +4,7 @@ import { processIncomingRequest } from '../services/requestProcessingService.js'
 /**
  * POST /api/whatsapp/webhook
  * Handles incoming WhatsApp webhook events from Evolution API.
- * Converts incoming WhatsApp messages into ResolveAI requests in Notion with automatic classification, SLA, and Action Logs.
+ * Converts incoming WhatsApp messages into ResolveAI requests in Notion and sends an automatic confirmation back to the sender.
  */
 export async function handleWebhook(req, res) {
   try {
@@ -52,11 +52,30 @@ export async function handleWebhook(req, res) {
 
     console.log(`Request created successfully: ${createdRequest.id || createdRequest.requestId}`);
 
-    // 5. Respond with HTTP 200 quickly and safely
+    // 5. Send automatic WhatsApp confirmation to the sender ONLY after Notion creation and Action Logs succeed
+    let confirmationResult = { success: false };
+    if (requesterPhone) {
+      console.log('Sending WhatsApp confirmation');
+      try {
+        const confirmationMessage = whatsappService.formatConfirmationReply(createdRequest);
+        confirmationResult = await whatsappService.sendWhatsAppMessage(requesterPhone, confirmationMessage);
+
+        if (confirmationResult.success) {
+          console.log('WhatsApp confirmation sent successfully');
+        } else {
+          console.warn(`WhatsApp confirmation failed: ${confirmationResult.error || 'Unknown error'}`);
+        }
+      } catch (sendErr) {
+        console.error(`WhatsApp confirmation failed: ${sendErr.message}`);
+      }
+    }
+
+    // 6. Respond with HTTP 200 quickly and safely
     return res.status(200).json({
       success: true,
       message: 'WhatsApp message processed and request created successfully',
-      data: createdRequest
+      data: createdRequest,
+      confirmationSent: Boolean(confirmationResult?.success)
     });
   } catch (error) {
     console.error('[WhatsApp Webhook Error]:', error.message);
