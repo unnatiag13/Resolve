@@ -3,7 +3,7 @@
  * Connects frontend components to the ResolveAI backend server.
  */
 
-const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000').replace(/\/$/, '');
+const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/$/, '');
 
 /**
  * Sanitizes backend or network error messages to prevent exposing internal keys or stack traces.

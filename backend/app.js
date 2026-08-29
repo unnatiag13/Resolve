@@ -1,5 +1,8 @@
 import express from 'express';
 import cors from 'cors';
+import path from 'path';
+import { fileURLToPath } from 'url';
+import fs from 'fs';
 import requestRoutes from './routes/requestRoutes.js';
 import departmentRouter from './routes/departmentRoutes.js';
 import whatsappRoutes from './routes/whatsappRoutes.js';
@@ -10,6 +13,10 @@ import { getResolutionSuggestions } from './services/resolutionSuggestionService
 import { getRequest } from './services/notionService.js';
 import errorHandler from './middleware/errorHandler.js';
 
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const frontendDist = path.join(__dirname, '../frontend/dist');
+
 const app = express();
 
 // Enable CORS
@@ -18,18 +25,13 @@ app.use(cors());
 // Body parser
 app.use(express.json());
 
-// Basic endpoints
-app.get('/', (req, res) => {
-  res.json({
-    success: true,
-    message: 'Welcome to the ResolveAI Request Resolution API',
-    version: '1.0.0',
-    phase: 2,
-    status: 'operational'
-  });
-});
+// Serve static frontend assets if built
+if (fs.existsSync(frontendDist)) {
+  app.use(express.static(frontendDist));
+}
 
 app.get('/health', (req, res) => {
+
   res.json({
     success: true,
     timestamp: new Date().toISOString(),
@@ -145,7 +147,27 @@ app.use('/api/requests', requestRoutes);
 app.use('/api/whatsapp', whatsappRoutes);
 app.get('/api/analytics/overview', getAnalyticsOverview);
 
+// React SPA fallback for all non-API routes
+app.get('*', (req, res, next) => {
+  if (req.path.startsWith('/api') || req.path === '/health') {
+    return next();
+  }
+  const indexPath = path.join(frontendDist, 'index.html');
+  if (fs.existsSync(indexPath)) {
+    res.sendFile(indexPath);
+  } else {
+    res.json({
+      success: true,
+      message: 'Welcome to the ResolveAI Request Resolution API',
+      version: '1.0.0',
+      phase: 2,
+      status: 'operational'
+    });
+  }
+});
+
 // Centralized error handling
 app.use(errorHandler);
 
 export default app;
+
