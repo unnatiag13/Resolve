@@ -1,25 +1,37 @@
+# Dependencies and logs
 node_modules/
-.env
-.DS_Store
 *.log
+.DS_Store
 
-# Backend specific ignored items
-backend/node_modules/
+# Environment configuration files (never commit real .env files)
+.env
+.env.*
+!.env.example
 backend/.env
+backend/.env.*
+!backend/.env.example
+frontend/.env
+frontend/.env.local
+frontend/.env.*.local
+!frontend/.env.example
+evolution-api/.env
+evolution-api/.env.*
+!evolution-api/.env.example
+
+# Evolution API runtime, sessions, instances & database data
+evolution-api/instances/
+evolution-api/store/
+evolution-api/sessions/
+evolution-api/*.png
+evolution-api/postgres_data/
+evolution-api/redis_data/
+
+# Frontend build output
+frontend/dist/
+
+# Backend temporary scripts
 backend/getIds.js
 backend/getInlineDatabaseIds.js
 backend/getNotionDatabases.js
 backend/scan.js
 backend/tools/debug-post.js
-
-# Frontend specific ignored items
-frontend/node_modules/
-frontend/dist/
-frontend/.env
-frontend/.env.local
-frontend/.env.*.local
-
-# Evolution API temporary assets
-evolution-api/*.png
-evolution-api/instances/
-

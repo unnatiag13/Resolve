@@ -4,14 +4,14 @@ services:
     container_name: evolution-api
     restart: unless-stopped
     ports:
-      - "8080:8080"
+      - "${PORT:-8080}:8080"
     environment:
-      SERVER_URL: http://localhost:8080
-      AUTHENTICATION_API_KEY: change_this_to_a_long_random_secret_12345
+      SERVER_URL: ${SERVER_URL:-http://localhost:8080}
+      AUTHENTICATION_API_KEY: ${AUTHENTICATION_API_KEY}
       DATABASE_PROVIDER: postgresql
-      DATABASE_CONNECTION_URI: postgresql://postgres:postgres@postgres:5432/evolution
-      CACHE_REDIS_ENABLED: "true"
-      CACHE_REDIS_URI: redis://redis:6379/1
+      DATABASE_CONNECTION_URI: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-evolution}
+      CACHE_REDIS_ENABLED: "${CACHE_REDIS_ENABLED:-true}"
+      CACHE_REDIS_URI: ${CACHE_REDIS_URI:-redis://redis:6379/1}
     depends_on:
       - postgres
       - redis
@@ -23,9 +23,9 @@ services:
     container_name: evolution-postgres
     restart: unless-stopped
     environment:
-      POSTGRES_DB: evolution
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: ${POSTGRES_DB:-evolution}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
     volumes:
       - postgres_data:/var/lib/postgresql/data
 
