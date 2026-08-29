@@ -18,3 +18,8 @@ frontend/dist/
 frontend/.env
 frontend/.env.local
 frontend/.env.*.local
+
+# Evolution API temporary assets
+evolution-api/*.png
+evolution-api/instances/
+
