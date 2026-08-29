@@ -138,7 +138,7 @@ Request Description: "${description.trim()}"
 Location: "${location ? location.trim() : 'Unspecified'}"
 Requester Name: "${requesterName ? requesterName.trim() : 'Student/Staff'}"`;
 
-    const modelsToTry = ['gemini-2.5-flash', 'gemini-2.5-flash-lite', 'gemini-flash-latest'];
+    const modelsToTry = ['gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-1.5-flash'];
     let response = null;
     let lastError = null;
 
@@ -158,7 +158,7 @@ Requester Name: "${requesterName ? requesterName.trim() : 'Student/Staff'}"`;
         lastError = err;
         const shortMsg = err.message ? (err.message.includes('429') || err.message.includes('quota') ? 'Quota/Rate Limit Reached' : 'API Service Unavailable') : 'Unknown Error';
         console.warn(`[AI Service] ${modelName} (${shortMsg}). Trying next model option...`);
-        await new Promise(r => setTimeout(r, 1000));
+        await new Promise(r => setTimeout(r, 200));
       }
     }
 
@@ -230,7 +230,7 @@ Request Description: "${description.trim()}"
 Location: "${location ? location.trim() : 'Unspecified'}"
 Requester Name: "${requesterName ? requesterName.trim() : 'Student/Staff'}"`;
 
-  const modelsToTry = ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant', 'mixtral-8x7b-32768'];
+  const modelsToTry = ['llama-3.3-70b-versatile', 'llama3-8b-8192', 'gemma2-9b-it'];
   let lastError = null;
   let responseData = null;
 

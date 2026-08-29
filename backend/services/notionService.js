@@ -84,6 +84,8 @@ function formatPropertyValue(propSchema, value) {
       return { select: { name: String(value) } };
     case 'email':
       return { email: String(value) };
+    case 'phone_number':
+      return { phone_number: String(value) };
     case 'number':
       return { number: Number(value) };
     case 'date':
@@ -113,6 +115,9 @@ function parseProperties(properties) {
         break;
       case 'email':
         result[key] = value.email;
+        break;
+      case 'phone_number':
+        result[key] = value.phone_number;
         break;
       case 'number':
         result[key] = value.number;
@@ -244,6 +249,7 @@ export async function createRequest(requestData) {
     description,
     requesterName,
     requesterEmail,
+    requesterPhone = '',
     location,
     source = 'Manual',
     intent = null,
@@ -272,6 +278,7 @@ export async function createRequest(requestData) {
       'Description': description,
       'Requester Name': requesterName,
       'Requester Email': requesterEmail,
+      'Requester Phone': requesterPhone,
       'Location': location,
       'Source': source,
       'Intent': intent,
@@ -313,6 +320,11 @@ export async function createRequest(requestData) {
     if (schemaProps['Description']) properties['Description'] = { rich_text: richText(description) };
     if (schemaProps['Requester Name']) properties['Requester Name'] = { rich_text: richText(requesterName) };
     if (schemaProps['Requester Email']) properties['Requester Email'] = { email: requesterEmail || null };
+    if (schemaProps['Requester Phone']) {
+      properties['Requester Phone'] = formatPropertyValue(schemaProps['Requester Phone'], requesterPhone || null);
+    } else if (schemaProps['Phone']) {
+      properties['Phone'] = formatPropertyValue(schemaProps['Phone'], requesterPhone || null);
+    }
     if (schemaProps['Location']) properties['Location'] = { rich_text: richText(location) };
     if (schemaProps['Source']) properties['Source'] = { select: { name: source } };
     if (schemaProps['Intent'] && intent) properties['Intent'] = { select: { name: intent } };
@@ -450,6 +462,7 @@ export async function updateRequest(requestId, updates) {
     if (updates.description !== undefined) updatedRecord['Description'] = updates.description;
     if (updates.requesterName !== undefined) updatedRecord['Requester Name'] = updates.requesterName;
     if (updates.requesterEmail !== undefined) updatedRecord['Requester Email'] = updates.requesterEmail;
+    if (updates.requesterPhone !== undefined) updatedRecord['Requester Phone'] = updates.requesterPhone;
     if (updates.location !== undefined) updatedRecord['Location'] = updates.location;
     if (updates.source !== undefined) updatedRecord['Source'] = updates.source;
     if (updates.intent !== undefined) updatedRecord['Intent'] = updates.intent;
@@ -485,6 +498,15 @@ export async function updateRequest(requestId, updates) {
     if (updates.description !== undefined) properties['Description'] = { rich_text: richText(updates.description) };
     if (updates.requesterName !== undefined) properties['Requester Name'] = { rich_text: richText(updates.requesterName) };
     if (updates.requesterEmail !== undefined) properties['Requester Email'] = { email: updates.requesterEmail || null };
+    if (updates.requesterPhone !== undefined) {
+      const dbSchema = await notion.databases.retrieve({ database_id: process.env.NOTION_REQUESTS_DATABASE_ID });
+      const schemaProps = dbSchema.properties || {};
+      if (schemaProps['Requester Phone']) {
+        properties['Requester Phone'] = formatPropertyValue(schemaProps['Requester Phone'], updates.requesterPhone || null);
+      } else if (schemaProps['Phone']) {
+        properties['Phone'] = formatPropertyValue(schemaProps['Phone'], updates.requesterPhone || null);
+      }
+    }
     if (updates.location !== undefined) properties['Location'] = { rich_text: richText(updates.location) };
     if (updates.source !== undefined) properties['Source'] = { select: { name: updates.source } };
     if (updates.intent !== undefined) properties['Intent'] = updates.intent ? { select: { name: updates.intent } } : { select: null };
@@ -699,10 +721,21 @@ export async function getActionLogs(requestId = null) {
   }
 
   try {
-    const response = await notion.databases.query({
+    const queryOptions = {
       database_id: process.env.NOTION_ACTION_LOGS_DATABASE_ID,
       page_size: 100
-    });
+    };
+
+    if (requestId) {
+      queryOptions.filter = {
+        property: 'Request ID',
+        rich_text: {
+          equals: requestId
+        }
+      };
+    }
+
+    const response = await notion.databases.query(queryOptions);
 
     const parsedLogs = response.results.map(page => ({
       notionPageId: page.id,

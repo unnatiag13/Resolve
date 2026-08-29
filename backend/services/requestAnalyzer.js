@@ -62,12 +62,12 @@ export function analyzeRequest(description = '') {
       confidence: 0.95
     },
     {
-      keywords: ['power', 'electricity', 'blackout', 'no power', 'socket', 'outlet', 'bulb', 'light', 'fan', 'ac', 'air conditioner', 'fuse', 'breaker', 'switch', 'voltage'],
+      keywords: ['power', 'electricity', 'blackout', 'no power', 'power outage', 'outage', 'power cut', 'socket', 'outlet', 'bulb', 'light', 'fan', 'ac', 'air conditioner', 'fuse', 'breaker', 'switch', 'voltage'],
       category: 'ELECTRICAL',
       subcategory: 'Power Supply',
       department: 'Maintenance',
-      priority: (text.includes('no power') || text.includes('blackout')) ? 'HIGH' : 'MEDIUM',
-      reason: (text.includes('no power') || text.includes('blackout'))
+      priority: (text.includes('no power') || text.includes('blackout') || text.includes('outage') || text.includes('power cut')) ? 'HIGH' : 'MEDIUM',
+      reason: (text.includes('no power') || text.includes('blackout') || text.includes('outage') || text.includes('power cut'))
         ? 'Power outage reported affecting facility operations.'
         : 'Electrical component or appliance failure reported.',
       confidence: 0.88

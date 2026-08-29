@@ -5,14 +5,7 @@ import { getRobustRequestAnalysis } from '../services/groqService.js';
 import { validateAndProcessTransition, logStatusTransition } from '../utils/statusWorkflow.js';
 import { processRequestIncidentLinking } from '../services/duplicateDetectionService.js';
 import { triggerNotification, EVENTS } from '../services/notificationService.js';
-
-/**
- * Helper to validate email format.
- */
-function isValidEmail(email) {
-  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-  return emailRegex.test(email);
-}
+import { processIncomingRequest } from '../services/requestProcessingService.js';
 
 /**
  * POST /api/requests
@@ -22,147 +15,18 @@ export async function createRequest(req, res, next) {
   try {
     const { requesterName, requesterEmail, location, description, forceFallback } = req.body;
 
-    console.log(`[API Server] POST /api/requests received from ${requesterName} (${requesterEmail}). Description: "${description ? description.substring(0, 50) : ''}..."`);
-
-    // 1. Validate the request body
-    if (!requesterName || !requesterName.trim()) {
-      const err = new Error('Requester name is required.');
-      err.isValidationError = true;
-      throw err;
-    }
-    if (!requesterEmail || !requesterEmail.trim() || !isValidEmail(requesterEmail)) {
-      const err = new Error('A valid requester email address is required.');
-      err.isValidationError = true;
-      throw err;
-    }
-    if (!location || !location.trim()) {
-      const err = new Error('Location is required.');
-      err.isValidationError = true;
-      throw err;
-    }
-    if (!description || !description.trim()) {
-      const err = new Error('Description is required.');
-      err.isValidationError = true;
-      throw err;
-    }
-
-    // 2. Generate a Request ID (e.g. REQ-0001)
-    const requestId = await notionService.getNextRequestId();
-
-    // 3. Robust Request Analysis (Gemini AI -> Safety Override -> Department Mapping -> SLA -> Rule-based Fallback)
-    const analysis = await getRobustRequestAnalysis({ description, location, requesterName }, Boolean(forceFallback));
-
-    // 4. Run duplicate request detection & incident linking BEFORE storing in Notion
-    const linkingResult = await processRequestIncidentLinking({
-      category: analysis.category,
-      location,
-      description
-    }, null);
-
-    const finalIncidentId = linkingResult.linked ? linkingResult.incidentId : '';
-
-    // 5. Create request in Notion (single write with incidentId already populated)
-    const notionRequestData = {
-      requestId,
-      description,
+    const requestData = await processIncomingRequest({
       requesterName,
       requesterEmail,
       location,
-      source: 'Web',
-      intent: analysis.intent,
-      category: analysis.category,
-      subcategory: analysis.subcategory,
-      priority: analysis.priority,
-      priorityReason: analysis.priorityReason,
-      department: analysis.department,
-      status: 'TRIAGED',
-      slaHours: analysis.slaHours,
-      dueAt: analysis.dueAt,
-      aiConfidence: analysis.aiConfidence,
-      assignedTo: '',
-      incidentId: finalIncidentId,
-      resolution: ''
-    };
-
-    const newRequest = await notionService.createRequest(notionRequestData);
-
-    // Trigger Request Created notification concurrently
-    triggerNotification(EVENTS.REQUEST_CREATED, {
-      ...notionRequestData,
-      incidentId: finalIncidentId
-    }).catch(err => console.warn('[Notification Error]', err.message));
-
-    // 6. Create Action Logs in parallel (non-blocking for fast response)
-    const actionLogs = [
-      {
-        requestId,
-        action: 'REQUEST_CREATED',
-        reason: 'New request received and created successfully',
-        performedBy: 'SYSTEM',
-        result: 'SUCCESS'
-      },
-      {
-        requestId,
-        action: 'AI_ANALYZED',
-        reason: `Request analyzed via ${analysis.analysisSource} and classified as ${analysis.category} / ${analysis.subcategory} successfully`,
-        performedBy: 'SYSTEM',
-        result: 'SUCCESS'
-      },
-      {
-        requestId,
-        action: 'PRIORITY_ASSIGNED',
-        reason: `${analysis.priority} priority assigned (${analysis.slaHours}h SLA). Reason: ${analysis.priorityReason}`,
-        performedBy: 'SYSTEM',
-        result: 'SUCCESS'
-      },
-      {
-        requestId,
-        action: 'DEPARTMENT_ASSIGNED',
-        reason: `Request assigned to ${analysis.department} department`,
-        performedBy: 'SYSTEM',
-        result: 'SUCCESS'
-      }
-    ];
-
-    if (linkingResult.linked) {
-      actionLogs.push({
-        requestId,
-        action: 'AI_ANALYZED',
-        reason: `Request identified as a duplicate of ${linkingResult.parentId}. Linked to Incident ID: ${finalIncidentId}.`,
-        performedBy: 'SYSTEM',
-        result: 'SUCCESS'
-      });
-    }
-
-    // Dispatch action logs concurrently in a single batch
-    await Promise.allSettled(actionLogs.map(log => notionService.createActionLog(log)))
-      .catch(err => console.warn('[Action Logs Error]', err.message));
+      description,
+      forceFallback,
+      source: 'Web'
+    });
 
     res.status(201).json({
       success: true,
-      data: {
-        id: requestId,
-        requesterName: newRequest['Requester Name'] || requesterName,
-        requesterEmail: newRequest['Requester Email'] || requesterEmail,
-        location: newRequest.Location || location,
-        description: newRequest.Description || description,
-        source: newRequest.Source || 'Web',
-        intent: newRequest.Intent || analysis.intent,
-        category: newRequest.Category || analysis.category,
-        subcategory: newRequest.Subcategory || analysis.subcategory,
-        priority: newRequest.Priority || analysis.priority,
-        priorityReason: newRequest['Priority Reason'] || analysis.priorityReason,
-        department: newRequest.Department || analysis.department,
-        status: newRequest.Status || 'TRIAGED',
-        slaHours: newRequest['SLA Hours'] || analysis.slaHours,
-        dueAt: newRequest['Due At'] || analysis.dueAt,
-        aiConfidence: newRequest['AI Confidence'] !== undefined && newRequest['AI Confidence'] !== null ? newRequest['AI Confidence'] : analysis.aiConfidence,
-        incidentId: finalIncidentId || newRequest['Incident ID'] || '',
-        analysisSource: analysis.analysisSource,
-        createdAt: newRequest['Created At'] || new Date().toISOString(),
-        updatedAt: newRequest['Updated At'] || new Date().toISOString(),
-        notionPageId: newRequest.notionPageId
-      }
+      data: requestData
     });
   } catch (error) {
     next(error);
