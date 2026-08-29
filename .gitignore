@@ -2,6 +2,7 @@
 node_modules/
 *.log
 .DS_Store
+.agents/
 
 # Environment configuration files (never commit real .env files)
 .env
